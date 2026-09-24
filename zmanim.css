@@ -1,0 +1,38 @@
+/* Zmanim relay page - styles */
+:root{--bg:#f4f4f5;--card:#fff;--tx:#18181b;--mu:#71717a;--on:#16a34a;--off:#dc2626;--bd:#e4e4e7}
+@media(prefers-color-scheme:dark){:root{--bg:#09090b;--card:#18181b;--tx:#fafafa;--mu:#a1a1aa;--bd:#27272a}
+}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+main{max-width:520px;margin:auto;padding:16px}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:12px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu);margin:0 0 8px}
+.st{font-size:34px;font-weight:700}
+.mu{color:var(--mu);font-size:13px}
+.row{display:flex;gap:8px;margin-top:12px}
+button{flex:1;padding:14px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx);font-size:16px;font-weight:600}
+.bon{background:var(--on);color:#fff;border:0}
+.boff{background:var(--off);color:#fff;border:0}
+.e{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--bd);font-size:14px}
+.e:first-of-type{border:0}
+.t{white-space:nowrap;font-variant-numeric:tabular-nums}
+.p{font-weight:700;min-width:34px}
+.pon{color:var(--on)}
+.poff{color:var(--off)}
+.pna{color:var(--mu)}
+label{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;font-size:15px;border-top:1px solid var(--bd)}
+label:first-of-type{border:0}
+input,select{font-size:15px;padding:6px 8px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx)}
+input[type=number]{width:70px}
+h3{font-size:15px;margin:14px 0 4px}
+.sr{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--bd);font-size:14px}
+.sr:first-child{border:0}
+.sr .x{flex:1}
+.sr button{flex:0 0 auto;padding:6px 10px;font-size:13px}
+.dis{opacity:.45}
+.tag{font-size:11px;color:var(--mu)}
+.dy{display:flex;gap:4px;padding:8px 0}
+.dy label{flex:1;display:block;text-align:center;border:1px solid var(--bd);border-radius:8px;padding:6px 0;font-size:13px}
+.dy input{display:none}
+.dy label.on{background:var(--on);color:#fff;border-color:var(--on)}
+.sf{border-top:1px solid var(--bd);margin-top:8px}
