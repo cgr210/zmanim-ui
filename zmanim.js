@@ -21,10 +21,23 @@ function pick(i) {
   $("nx").innerHTML = $("hs").innerHTML = $("sl").innerHTML = ""; $("msg").textContent = $("smsg").textContent = "";
   sreset(); tabs(); go(); sreq();
 }
-function rpcAt(base, method, params) {
-  return fetch(base + "/rpc", { method: "POST", body: JSON.stringify({ id: 1, method: method, params: params || {} }) })
+// this device: call its RPC directly. Other devices: relay through this Shelly's
+// built-in HTTP.Request (avoids browser cross-origin blocking; uses no script memory)
+function rpcLocal(method, params) {
+  return fetch("/rpc", { method: "POST", body: JSON.stringify({ id: 1, method: method, params: params || {} }) })
     .then(function (r) { return r.json(); })
     .then(function (j) { if (j.error) throw new Error(j.error.message || "RPC error"); return j.result; });
+}
+function rpcAt(base, method, params) {
+  if (!base) return rpcLocal(method, params);
+  return rpcLocal("HTTP.Request", { method: "POST", url: base + "/rpc", timeout: 10,
+      body: JSON.stringify({ id: 1, method: method, params: params || {} }) })
+    .then(function (r) {
+      if (!r || r.code !== 200) throw new Error("HTTP " + (r && r.code));
+      var j = JSON.parse(r.body);
+      if (j.error) throw new Error(j.error.message || "RPC error");
+      return j.result;
+    });
 }
 function evalAt(base, id, code) {
   return rpcAt(base, "Script.Eval", { id: id, code: code }).then(function (r) { return r && r.result !== undefined ? r.result : r; });
