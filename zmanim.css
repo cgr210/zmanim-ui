@@ -41,4 +41,6 @@ h3{font-size:15px;margin:14px 0 4px}
 .tabs button.act{background:var(--tx);color:var(--bg);border-color:var(--tx)}
 .tabs button.terr{opacity:.5}
 .dv{display:flex;gap:6px;align-items:center;padding:6px 0;border-top:1px solid var(--bd)}.dv:first-child{border:0}
-.dv input{flex:1;min-width:0}.dv button{flex:0 0 auto;padding:6px 10px}.dvs{flex:1} 
+.dv input{flex:1;min-width:0}.dv button{flex:0 0 auto;padding:6px 10px}.dvs{flex:1}
+.e.dis{opacity:.45}
+#zm label span{display:flex;gap:6px;align-items:center}#smn{width:70px}
