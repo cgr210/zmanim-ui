@@ -1,6 +1,6 @@
 /* Zmanim relay page - loaded by the Shelly core script (CORE = its script id, SW = switch id) */
 (function () {
-var BODY = "<div class=\"c\"><h1>Zmanim relay</h1><div class=\"mu\" id=\"now\"></div><div class=\"st\" id=\"st\">...</div><div class=\"row\"><button class=\"bon\" onclick=\"go(&quot;cmd=on&quot;)\">ON</button><button class=\"boff\" onclick=\"go(&quot;cmd=off&quot;)\">OFF</button></div><div class=\"mu\" style=\"margin-top:8px\">Manual switching holds until the next scheduled event.</div></div><div class=\"c\"><h2>Next</h2><div id=\"nx\"></div></div><div class=\"c\"><h2>History</h2><div id=\"hs\"></div></div><div class=\"c\"><h2>Schedules</h2><div id=\"sl\"></div><div class=\"sf\"><h3 id=\"sft\">Add schedule</h3><label>Trigger<select id=\"stg\" onchange=\"sform()\"><option value=\"0\">Fixed time</option><option value=\"1\">Candle lighting</option><option value=\"2\">Havdalah</option></select></label><div id=\"fx\"><label>Time<input type=\"time\" id=\"stm\" value=\"07:00\"></label><div class=\"dy\" id=\"sdy\"></div></div><div id=\"zm\"><label>Timing<span><select id=\"sof\" onchange=\"sform()\"><option value=\"0\">At the time</option><option value=\"-1\">Minutes before</option><option value=\"1\">Minutes after</option></select> <input type=\"number\" id=\"smn\" min=\"1\" max=\"180\" value=\"10\"></span></label><label>Applies to<select id=\"sfl\"></select></label></div><label>Action<select id=\"sac\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option></select></label><div class=\"row\"><button onclick=\"ssave()\">Save schedule</button><button onclick=\"sreset()\">Clear</button></div><div class=\"mu\" id=\"smsg\" style=\"margin-top:8px\"></div></div></div><div class=\"c\"><h2>Devices on this page</h2><div id=\"dvl\"></div><div class=\"row\"><button onclick=\"dadd()\">Add device</button><button onclick=\"dsave()\">Save devices</button></div><div class=\"mu\" id=\"dmsg\" style=\"margin-top:8px\"></div></div><div class=\"c\"><h2>Settings</h2><div class=\"mu\" style=\"margin-bottom:6px\">Defines when candle lighting and havdalah are. What happens then is set in Schedules.</div><label>Candle lighting (min before sunset)<input type=\"number\" id=\"c\" min=\"0\" max=\"60\"></label><label>Havdalah<select id=\"h\"><option value=\"0\">Tzeit 8.5&deg;</option><option value=\"42\">42 min</option><option value=\"50\">50 min</option><option value=\"60\">60 min</option><option value=\"72\">72 min (Rabbeinu Tam)</option></select></label><label>Pause app schedules on Shabbos/YT<input type=\"checkbox\" id=\"ps\"></label><div class=\"row\"><button onclick=\"save()\">Save settings</button></div><div class=\"mu\" id=\"msg\" style=\"margin-top:8px\"></div></div><div class=\"row\"><button onclick=\"go(&quot;cmd=refresh&quot;)\">Reload times from Hebcal</button></div>";
+var BODY = "<div class=\"c\"><h1>Zmanim relay</h1><div class=\"mu\" id=\"now\"></div><div class=\"st\" id=\"st\">...</div><div class=\"row\"><button class=\"bon\" onclick=\"go(&quot;cmd=on&quot;)\">ON</button><button class=\"boff\" onclick=\"go(&quot;cmd=off&quot;)\">OFF</button></div><div class=\"mu\" style=\"margin-top:8px\">Manual switching holds until the next scheduled event.</div></div><div class=\"c\"><h2>Next</h2><div id=\"nx\"></div></div><div class=\"c\"><h2>History</h2><div id=\"hs\"></div></div><div class=\"c\"><h2>Schedules</h2><div id=\"sl\"></div><div class=\"sf\"><h3 id=\"sft\">Add schedule</h3><label>Trigger<select id=\"stg\" onchange=\"sform()\"><option value=\"0\">Fixed time</option><option value=\"1\">Candle lighting</option><option value=\"2\">Havdalah</option></select></label><div id=\"fx\"><label>Time<input type=\"time\" id=\"stm\" value=\"07:00\"></label><div class=\"dy\" id=\"sdy\"></div><label>Skip on Shabbos/YT<input type=\"checkbox\" id=\"ssk\"></label></div><div id=\"zm\"><label>Timing<span><select id=\"sof\" onchange=\"sform()\"><option value=\"0\">At the time</option><option value=\"-1\">Minutes before</option><option value=\"1\">Minutes after</option></select> <input type=\"number\" id=\"smn\" min=\"1\" max=\"180\" value=\"10\"></span></label><label>Applies to<select id=\"sfl\"></select></label></div><label>Action<select id=\"sac\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option></select></label><div class=\"row\"><button onclick=\"ssave()\">Save schedule</button><button onclick=\"sreset()\">Clear</button></div><div class=\"mu\" id=\"smsg\" style=\"margin-top:8px\"></div></div></div><div class=\"c\"><h2>Devices on this page</h2><div id=\"dvl\"></div><div class=\"row\"><button onclick=\"dadd()\">Add device</button><button onclick=\"dsave()\">Save devices</button></div><div class=\"mu\" id=\"dmsg\" style=\"margin-top:8px\"></div></div><div class=\"c\"><h2>Settings</h2><div class=\"mu\" style=\"margin-bottom:6px\">Defines when candle lighting and havdalah are. What happens then is set in Schedules.</div><label>Candle lighting (min before sunset)<input type=\"number\" id=\"c\" min=\"0\" max=\"60\"></label><label>Havdalah<select id=\"h\"><option value=\"0\">Tzeit 8.5&deg;</option><option value=\"42\">42 min</option><option value=\"50\">50 min</option><option value=\"60\">60 min</option><option value=\"72\">72 min (Rabbeinu Tam)</option></select></label><div class=\"row\"><button onclick=\"save()\">Save settings</button></div><div class=\"mu\" id=\"msg\" style=\"margin-top:8px\"></div></div><div class=\"row\"><button onclick=\"go(&quot;cmd=refresh&quot;)\">Reload times from Hebcal</button></div>";
 document.getElementById("app").outerHTML = "<main>" + BODY + "</main>";
 })();
 
@@ -17,7 +17,7 @@ function tabs() {
 function pick(i) {
   var d = DEVS[i];
   if (d.err) { $("now").textContent = d.name + ": " + d.err; return; }
-  D = d; filled = false; SJ = []; PZ = []; LD = null; RJ = [];
+  D = d; filled = false; SJ = []; PZ = []; LD = null; RJ = []; SK = [];
   document.title = D.name; document.querySelector("h1").textContent = D.name;
   $("nx").innerHTML = $("hs").innerHTML = $("sl").innerHTML = ""; $("msg").textContent = $("smsg").textContent = "";
   sreset(); tabs(); go(); sreq();
@@ -131,14 +131,14 @@ function renderNext() {
   var win = [], st = d.holy ? d.ts : null;
   d.next.forEach(function (e) { if (e[4] === 1 && st === null) st = e[3]; else if (e[4] === 2 && st !== null) { win.push([st, e[3]]); st = null; } });
   if (st !== null) win.push([st, Infinity]);
-  var ps = d.cfg && d.cfg.ps;
+
   SJ.forEach(function (s) {
     if (!s.t || s.a === null || !(s.en || PZ.indexOf(s.id) >= 0)) return;
     var hm = +s.t.slice(0, 2) * 3600 + +s.t.slice(3) * 60, day0 = Math.floor((d.ts + d.off) / 86400);
     for (var k = 0; k <= 7; k++) {
       var day = day0 + k; if (s.d.indexOf((day + 4) % 7) < 0) continue;
       var t = day * 86400 + hm - d.off; if (t <= d.ts || t > end) continue;
-      var skip = ps && win.some(function (w) { return t >= w[0] && t < w[1]; });
+      var skip = SK.indexOf(s.id) >= 0 && win.some(function (w) { return t >= w[0] && t < w[1]; });
       list.push([fmtT(t, d.off), s.a, skip ? "Schedule - skipped (Shabbos/YT)" : "Schedule", t, 0, skip]);
     }
   });
@@ -152,7 +152,7 @@ function show(d) {
   $("hs").innerHTML = d.hist.map(row).join("") || '<div class="mu">none yet</div>';
   if (!filled && d.cfg) {
     var c = d.cfg;
-    $("c").value = c.c; $("h").value = c.h; $("ps").checked = c.ps; filled = true;
+    $("c").value = c.c; $("h").value = c.h; filled = true;
   }
   if (d.msg) $("msg").textContent = d.msg;
   PZ = d.paused || [];
@@ -163,7 +163,7 @@ function go(q) {
   if (q) setTimeout(function () { go(); sreq(); }, 3000);
 }
 function save() {
-  go("set=1&c=" + $("c").value + "&h=" + $("h").value + "&il=0" + "&ps=" + ($("ps").checked ? 1 : 0));
+  go("set=1&c=" + $("c").value + "&h=" + $("h").value + "&il=0&ps=1");
 }
 
 // ---- schedules (Shelly's own Schedule component, called directly) ----
@@ -196,6 +196,15 @@ function jobAction(j) {
 }
 // ---- zman schedules (run by the script; saved on the device in KVS "zmanim_rules") ----
 // rule = [type 1=candle 2=havdalah, offset min, on 1/0, filter 0=all 1=Shabbos 2=YT 3=first night, enabled 1/0]
+var SK = [];   // schedule ids that skip Shabbos/YT (KVS "zmanim_skip")
+function skload() {
+  var d = D;
+  return rpc("KVS.Get", { key: "zmanim_skip" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return []; })
+    .then(function (x) { if (d === D) { SK = x; slist(SJ); } });
+}
+function sksave() { return rpc("KVS.Set", { key: "zmanim_skip", value: JSON.stringify(SK) }); }
+function skset(id, on) { var i = SK.indexOf(id); if (on && i < 0) SK.push(id); if (!on && i >= 0) SK.splice(i, 1); return sksave(); }
+function sktog(i) { var s = SJ[i]; sdo(skset(s.id, SK.indexOf(s.id) < 0)); }
 var RJ = [], FL = ["Every time", "Shabbos only", "Yom Tov only", "First night only"];
 function rload() {
   var d = D;
@@ -223,10 +232,11 @@ function sform() {
 
 function sreq() {
   var d = D;
-  rload();
+  rload(); skload();
   return rpc("Schedule.List").then(function (r) {
     if (d !== D) return;
-    SJ = (r.jobs || []).map(function (j) { var ps = parseSpec(j.timespec || ""); return { id: j.id, en: !!j.enable, t: ps && ps.t, d: ps && ps.d, a: jobAction(j), ts: j.timespec }; });
+    SJ = (r.jobs || []).map(function (j) { var ps = parseSpec(j.timespec || ""); var a = jobAction(j), m = j.calls && j.calls[0] && j.calls[0].method;
+      return { id: j.id, en: !!j.enable, t: ps && ps.t, d: ps && ps.d, a: a, ts: j.timespec, fx: !!(ps && a !== null), m: m }; });
     slist(SJ);
   }).catch(function (e) { $("smsg").textContent = "Could not read schedules: " + e.message; });
 }
@@ -235,11 +245,13 @@ function slist(j) {
   var h = "";
   j.forEach(function (s, i) {
     var p = PZ.indexOf(s.id) >= 0;
+    var what = s.a !== null ? "" : " &middot; " + (s.m === "Shelly.Update" ? "Firmware update" : esc(s.m || "other action"));
     h += '<div class="sr' + (s.en || p ? "" : " dis") + '"><span class="x"><b>' + (s.t || "custom") + "</b> " +
       (s.a === null ? "" : '<span class="' + (s.a ? "pon" : "poff") + '">' + (s.a ? "ON" : "OFF") + "</span> ") +
-      (s.t ? dtxt(s.d) : esc(s.ts)) + (p ? ' <span class="tag">paused for Shabbos/YT</span>' : "") + "</span>" +
+      (s.t ? dtxt(s.d) : esc(s.ts)) + what + (SK.indexOf(s.id) >= 0 ? ' <span class="tag">skips Shabbos/YT</span>' : "") + (p ? ' <span class="tag">paused now</span>' : "") + "</span>" +
+      (s.fx ? "" : '<button onclick="sktog(' + i + ')">' + (SK.indexOf(s.id) >= 0 ? "Run on Shabbos" : "Skip Shabbos") + "</button>") +
       '<button onclick="sen(' + i + ')">' + (s.en || p ? "Disable" : "Enable") + "</button>" +
-      (s.t ? '<button onclick="sedit(' + i + ')">Edit</button>' : "") + '<button onclick="sdel(' + i + ')">&times;</button></div>';
+      (s.fx ? '<button onclick="sedit(' + i + ')">Edit</button>' : "") + '<button onclick="sdel(' + i + ')">&times;</button></div>';
   });
   RJ.forEach(function (r, i) {
     h += '<div class="sr' + (r[4] ? "" : " dis") + '"><span class="x"><b>' + rtxt(r) + "</b> " +
@@ -255,11 +267,11 @@ function sen(i) {
   if (PZ.indexOf(s.id) >= 0) { $("smsg").textContent = "Paused for Shabbos/YT - it will resume at havdalah"; return; }
   sdo(rpc("Schedule.Update", { id: s.id, enable: !s.en }));
 }
-function sdel(i) { if (confirm("Delete this schedule?")) sdo(rpc("Schedule.Delete", { id: SJ[i].id })).then(sreset); }
+function sdel(i) { var id = SJ[i].id; if (confirm("Delete this schedule?")) sdo(rpc("Schedule.Delete", { id: id }).then(function () { return SK.indexOf(id) >= 0 ? skset(id, false) : null; })).then(sreset); }
 function sedit(i) {
   var s = SJ[i]; ED = s.id; $("sft").textContent = "Edit schedule"; $("stg").value = "0"; sform(); $("stm").value = s.t;
   for (var k = 0; k < 7; k++) $("d" + k).checked = s.d.indexOf(k) >= 0;
-  dsty(); $("sac").value = s.a ? "on" : "off"; $("smsg").textContent = "";
+  dsty(); $("sac").value = s.a ? "on" : "off"; $("ssk").checked = SK.indexOf(s.id) >= 0; $("smsg").textContent = "";
 }
 function rdo(f) { $("smsg").textContent = ""; f(); return rsave().then(function () { slist(SJ); }).catch(function (e) { $("smsg").textContent = "Failed: " + e.message; return rload(); }); }
 function ren(i) { rdo(function () { RJ[i][4] = RJ[i][4] ? 0 : 1; }); }
@@ -269,7 +281,7 @@ function redit(i) {
   $("stg").value = r[0]; $("sof").value = r[1] < 0 ? "-1" : (r[1] > 0 ? "1" : "0"); $("smn").value = Math.abs(r[1]) || 10;
   sform(); $("sfl").value = r[3]; $("sac").value = r[2] ? "on" : "off"; $("smsg").textContent = "";
 }
-function sreset() { ED = null; $("stg").value = "0"; $("sof").value = "0"; sform(); $("sft").textContent = "Add schedule"; for (var k = 0; k < 7; k++) $("d" + k).checked = false; dsty(); }
+function sreset() { ED = null; $("stg").value = "0"; $("sof").value = "0"; $("ssk").checked = false; sform(); $("sft").textContent = "Add schedule"; for (var k = 0; k < 7; k++) $("d" + k).checked = false; dsty(); }
 function dsty() { for (var i = 0; i < 7; i++) $("dl" + i).className = $("d" + i).checked ? "on" : ""; }
 function ssave() {
   var tg = +$("stg").value;
@@ -296,11 +308,14 @@ function ssave() {
   if (typeof ED === "string") {
     // editing a zman schedule into a fixed-time one: create the fixed one, then remove the zman one
     var ri = +ED.slice(1);
-    sdo(rpc("Schedule.Create", p)).then(function () { return rdo(function () { RJ.splice(ri, 1); }); }).then(function () { sreset(); $("smsg").textContent = "Saved"; });
+    var sk1 = $("ssk").checked;
+    sdo(rpc("Schedule.Create", p).then(function (c) { return sk1 ? skset(c.id, true) : null; })).then(function () { return rdo(function () { RJ.splice(ri, 1); }); }).then(function () { sreset(); $("smsg").textContent = "Saved"; });
     return;
   }
   if (ED !== null) p.id = ED;
-  sdo(rpc(ED === null ? "Schedule.Create" : "Schedule.Update", p)).then(function () { sreset(); $("smsg").textContent = "Saved"; });
+  var sk = $("ssk").checked, eid = ED;
+  sdo(rpc(ED === null ? "Schedule.Create" : "Schedule.Update", p).then(function (c) { return skset(eid === null ? c.id : eid, sk); }))
+    .then(function () { sreset(); $("smsg").textContent = "Saved"; });
 }
 
 (function () {
