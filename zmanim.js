@@ -1,6 +1,6 @@
 /* Zmanim relay page - loaded by the Shelly core script (CORE = its script id, SW = switch id) */
 (function () {
-var BODY = "<div class=\"c\"><h1>Zmanim relay</h1><div class=\"mu\" id=\"now\"></div><div class=\"st\" id=\"st\">...</div><div class=\"row\"><button class=\"bon\" onclick=\"go(&quot;cmd=on&quot;)\">ON</button><button class=\"boff\" onclick=\"go(&quot;cmd=off&quot;)\">OFF</button></div><div class=\"mu\" style=\"margin-top:8px\">Manual switching holds until the next scheduled event.</div></div><div class=\"c\"><h2>Next</h2><div id=\"nx\"></div></div><div class=\"c\"><h2>History</h2><div id=\"hs\"></div></div><div class=\"c\"><h2>Schedules</h2><div id=\"sl\"></div><div class=\"sf\"><h3 id=\"sft\">Add schedule</h3><label>Time<input type=\"time\" id=\"stm\" value=\"07:00\"></label><div class=\"dy\" id=\"sdy\"></div><label>Action<select id=\"sac\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option></select></label><div class=\"row\"><button onclick=\"ssave()\">Save schedule</button><button onclick=\"sreset()\">Clear</button></div><div class=\"mu\" id=\"smsg\" style=\"margin-top:8px\"></div></div></div><div class=\"c\"><h2>Settings</h2><label>At candle lighting<select id=\"sa\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option><option value=\"none\">Do nothing</option></select></label><label>At havdalah<select id=\"ea\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option><option value=\"none\">Do nothing</option></select></label><label>Candle lighting (min before sunset)<input type=\"number\" id=\"c\" min=\"0\" max=\"60\"></label><label>Havdalah<select id=\"h\"><option value=\"0\">Tzeit 8.5&deg;</option><option value=\"42\">42 min</option><option value=\"50\">50 min</option><option value=\"60\">60 min</option><option value=\"72\">72 min (Rabbeinu Tam)</option></select></label><label>Extra min at start (- = earlier)<input type=\"number\" id=\"so\" min=\"-60\" max=\"60\"></label><label>Extra min at end (+ = later)<input type=\"number\" id=\"eo\" min=\"-60\" max=\"60\"></label><label>Israel (1-day Yom Tov)<input type=\"checkbox\" id=\"il\"></label><label>Pause app schedules on Shabbos/YT<input type=\"checkbox\" id=\"ps\"></label><div class=\"row\"><button onclick=\"save()\">Save settings</button></div><div class=\"mu\" id=\"msg\" style=\"margin-top:8px\"></div></div><div class=\"row\"><button onclick=\"go(&quot;cmd=refresh&quot;)\">Reload times from Hebcal</button></div>";
+var BODY = "<div class=\"c\"><h1>Zmanim relay</h1><div class=\"mu\" id=\"now\"></div><div class=\"st\" id=\"st\">...</div><div class=\"row\"><button class=\"bon\" onclick=\"go(&quot;cmd=on&quot;)\">ON</button><button class=\"boff\" onclick=\"go(&quot;cmd=off&quot;)\">OFF</button></div><div class=\"mu\" style=\"margin-top:8px\">Manual switching holds until the next scheduled event.</div></div><div class=\"c\"><h2>Next</h2><div id=\"nx\"></div></div><div class=\"c\"><h2>History</h2><div id=\"hs\"></div></div><div class=\"c\"><h2>Schedules</h2><div id=\"sl\"></div><div class=\"sf\"><h3 id=\"sft\">Add schedule</h3><label>Time<input type=\"time\" id=\"stm\" value=\"07:00\"></label><div class=\"dy\" id=\"sdy\"></div><label>Action<select id=\"sac\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option></select></label><div class=\"row\"><button onclick=\"ssave()\">Save schedule</button><button onclick=\"sreset()\">Clear</button></div><div class=\"mu\" id=\"smsg\" style=\"margin-top:8px\"></div></div></div><div class=\"c\"><h2>Devices on this page</h2><div id=\"dvl\"></div><div class=\"row\"><button onclick=\"dadd()\">Add device</button><button onclick=\"dsave()\">Save devices</button></div><div class=\"mu\" id=\"dmsg\" style=\"margin-top:8px\"></div></div><div class=\"c\"><h2>Settings</h2><label>At candle lighting<select id=\"sa\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option><option value=\"none\">Do nothing</option></select></label><label>At havdalah<select id=\"ea\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option><option value=\"none\">Do nothing</option></select></label><label>Candle lighting (min before sunset)<input type=\"number\" id=\"c\" min=\"0\" max=\"60\"></label><label>Havdalah<select id=\"h\"><option value=\"0\">Tzeit 8.5&deg;</option><option value=\"42\">42 min</option><option value=\"50\">50 min</option><option value=\"60\">60 min</option><option value=\"72\">72 min (Rabbeinu Tam)</option></select></label><label>Extra min at start (- = earlier)<input type=\"number\" id=\"so\" min=\"-60\" max=\"60\"></label><label>Extra min at end (+ = later)<input type=\"number\" id=\"eo\" min=\"-60\" max=\"60\"></label><label>Israel (1-day Yom Tov)<input type=\"checkbox\" id=\"il\"></label><label>Pause app schedules on Shabbos/YT<input type=\"checkbox\" id=\"ps\"></label><div class=\"row\"><button onclick=\"save()\">Save settings</button></div><div class=\"mu\" id=\"msg\" style=\"margin-top:8px\"></div></div><div class=\"row\"><button onclick=\"go(&quot;cmd=refresh&quot;)\">Reload times from Hebcal</button></div>";
 document.getElementById("app").outerHTML = "<main>" + BODY + "</main>";
 })();
 
@@ -8,7 +8,8 @@ document.getElementById("app").outerHTML = "<main>" + BODY + "</main>";
 var DEVS = [{ base: "", core: CORE, sw: SW, name: window.NM || "This device" }], D = DEVS[0];
 document.querySelector("main").insertAdjacentHTML("afterbegin", '<div class="tabs" id="tabs"></div>');
 function tabs() {
-  if (DEVS.length < 2 && !(window.PEERS && PEERS.length)) { $("tabs").style.display = "none"; return; }
+  if (DEVS.length < 2) { $("tabs").style.display = "none"; return; }
+  $("tabs").style.display = "";
   $("tabs").innerHTML = DEVS.map(function (d, i) {
     return '<button class="' + (d === D ? "act" : "") + (d.err ? " terr" : "") + '" onclick="pick(' + i + ')">' + esc(d.name) + "</button>";
   }).join("");
@@ -43,20 +44,59 @@ function evalAt(base, id, code) {
   return rpcAt(base, "Script.Eval", { id: id, code: code }).then(function (r) { return r && r.result !== undefined ? r.result : r; });
 }
 // find the zmanim script on a peer: the running script that defines webCmd
+// one request at a time per device: the main Shelly relays every request, and limits how many it handles at once
 function addPeer(ip) {
-  var d = { base: "http://" + ip, name: ip }; DEVS.push(d); tabs();
-  rpcAt(d.base, "Shelly.GetDeviceInfo").then(function (i) { d.name = i.name || i.id || ip; tabs(); }).catch(function () {});
-  rpcAt(d.base, "Script.List").then(function (r) {
-    var run = (r.scripts || []).filter(function (x) { return x.running; });
-    return Promise.all(run.map(function (x) {
-      return evalAt(d.base, x.id, "typeof webCmd").then(function (t) { return t === "function" ? x.id : null; }).catch(function () { return null; });
-    }));
-  }).then(function (ids) {
-    var id = ids.filter(function (x) { return x !== null; })[0];
-    if (id === undefined) throw new Error("zmanim script not running");
-    d.core = id;
-    return evalAt(d.base, id, "CFG.switchId").then(function (sw) { d.sw = +sw || 0; });
-  }).catch(function (e) { d.err = e.message || "not reachable"; }).then(tabs);
+  var d = { base: "http://" + ip, ip: ip, name: ip }; DEVS.push(d); tabs();
+  return rpcAt(d.base, "Shelly.GetDeviceInfo").then(function (i) { d.dname = i.name || ""; d.name = i.name || i.id || ip; tabs(); })
+    .then(function () { return rpcAt(d.base, "Script.List"); })
+    .then(function (r) {
+      var run = (r.scripts || []).filter(function (x) { return x.running; }), found = null;
+      return run.reduce(function (p, x) {
+        return p.then(function () {
+          if (found !== null) return;
+          return evalAt(d.base, x.id, "typeof webCmd").then(function (t) { if (t === "function") found = x.id; }).catch(function () {});
+        });
+      }, Promise.resolve()).then(function () { return found; });
+    })
+    .then(function (id) {
+      if (id === null) throw new Error("zmanim script not running");
+      d.core = id;
+      return evalAt(d.base, id, "CFG.switchId").then(function (sw) { d.sw = +sw || 0; });
+    })
+    .catch(function (e) { d.err = e.message || "not reachable"; })
+    .then(tabs);
+}
+function loadPeers(ips) { return ips.reduce(function (p, ip) { return p.then(function () { return addPeer(ip); }); }, Promise.resolve()); }
+
+// ---- device list editor (list of IPs saved on this Shelly in KVS "zmanim_peers"; names are each Shelly's own device name) ----
+var DE = null;
+function dlist() {
+  if (DE === null) DE = DEVS.map(function (d) { return { ip: d.ip || "", name: d.base ? (d.dname || "") : (DEVS[0].dname || ""), self: !d.base, orig: d.base ? (d.dname || "") : (DEVS[0].dname || "") }; });
+  $("dvl").innerHTML = DE.map(function (e, i) {
+    return '<div class="dv"><input placeholder="Name" value="' + esc(e.name) + '" oninput="DE[' + i + '].name=this.value">' +
+      (e.self ? '<span class="mu dvs">this device</span>' : '<input placeholder="IP address" value="' + esc(e.ip) + '" oninput="DE[' + i + '].ip=this.value.trim()"><button onclick="ddel(' + i + ')">&times;</button>') + "</div>";
+  }).join("");
+}
+function dadd() { DE.push({ ip: "", name: "", self: false, orig: "" }); dlist(); }
+function ddel(i) { DE.splice(i, 1); dlist(); }
+function dsave() {
+  var ips = [], bad = null;
+  DE.forEach(function (e) { if (e.self) return; if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(e.ip)) bad = e.ip || "(empty)"; else ips.push(e.ip); });
+  if (bad) { $("dmsg").textContent = "Invalid IP address: " + bad; return; }
+  if (DE.some(function (e) { return e.name.length > 40; })) { $("dmsg").textContent = "Names must be 40 characters or less"; return; }
+  $("dmsg").textContent = "Saving...";
+  var errs = [], p = rpcLocal("KVS.Set", { key: "zmanim_peers", value: JSON.stringify(ips) });
+  DE.forEach(function (e) {
+    if (e.name === e.orig) return;
+    p = p.then(function () {
+      return rpcAt(e.self ? "" : "http://" + e.ip, "Sys.SetConfig", { config: { device: { name: e.name || null } } })
+        .catch(function (x) { errs.push((e.name || e.ip) + ": " + x.message); });
+    });
+  });
+  p.then(function () {
+    if (errs.length) $("dmsg").textContent = "Saved list, but could not rename " + errs.join("; ");
+    else location.reload();
+  }).catch(function (x) { $("dmsg").textContent = "Failed: " + x.message; });
 }
 
 var filled = false, DN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"], SD = ["SUN","MON","TUE","WED","THU","FRI","SAT"], ED = null, PZ = [], SJ = [];
@@ -177,7 +217,11 @@ function ssave() {
   var h = ""; for (var i = 0; i < 7; i++) h += '<label id="dl' + i + '"><input type="checkbox" id="d' + i + '" onchange="dsty()">' + DN[i] + "</label>";
   $("sdy").innerHTML = h;
 })();
-if (window.NM) { document.title = NM; document.querySelector("h1").textContent = NM; }
-(window.PEERS || []).forEach(addPeer);
-tabs(); go(); sreq();
+function setTitle() { document.title = DEVS[0].name; if (D === DEVS[0]) document.querySelector("h1").textContent = DEVS[0].name; }
+setTitle(); tabs(); go();
+rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; setTitle(); tabs(); }).catch(function () {})
+  .then(sreq)
+  .then(function () { return rpcLocal("KVS.Get", { key: "zmanim_peers" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return window.PEERS || []; }); })
+  .then(function (ips) { $("dvl").innerHTML = '<div class="mu">Loading devices...</div>'; return loadPeers(ips); })
+  .then(dlist);
 setInterval(function () { go(); }, 15000);
