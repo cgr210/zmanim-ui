@@ -142,6 +142,12 @@ function renderNext() {
       list.push([fmtT(t, d.off), s.a, skip ? "Schedule - skipped (Shabbos/YT)" : "Schedule", t, 0, skip]);
     }
   });
+  // hide a zman's "–" info line when a zman schedule already switches at (or within 3h of) that zman
+  list = list.filter(function (e) {
+    if (e[1] !== null || !e[4]) return true;
+    var name = e[4] === 1 ? "Candle lighting" : "Havdalah";
+    return !list.some(function (x) { return x[4] === 0 && x[1] !== null && String(x[2]).indexOf(name) === 0 && Math.abs(x[3] - e[3]) <= 10800; });
+  });
   list.sort(function (a, b) { return a[3] - b[3]; });
   $("nx").innerHTML = list.map(row).join("") || '<div class="mu">none loaded</div>';
 }
