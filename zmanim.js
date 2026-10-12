@@ -152,7 +152,9 @@ function renderNext() {
   $("nx").innerHTML = list.map(row).join("") || '<div class="mu">none loaded</div>';
 }
 function show(d) {
-  $("now").textContent = d.now;
+  var age = d.made ? Math.floor((d.ts - d.made) / 86400) : -1;
+  $("now").textContent = d.now + (d.made === 0 ? " \u00b7 \u26a0 no zmanim times loaded" : (age >= 3 ? " \u00b7 \u26a0 times file " + age + " days old - check the GitHub job" : ""));
+  $("now").style.color = (d.made === 0 || age >= 3) ? "var(--off)" : "";
   var s = $("st"); s.textContent = d.relay ? "ON" : "OFF"; s.style.color = d.relay ? "var(--on)" : "var(--off)";
   LD = d; renderNext();
   $("hs").innerHTML = d.hist.map(row).join("") || '<div class="mu">none yet</div>';
