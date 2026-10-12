@@ -1,0 +1,25 @@
+name: Zmanim times
+on:
+  schedule:
+    - cron: "17 1 * * *"      # daily, 01:17 UTC
+  workflow_dispatch:           # "Run workflow" button
+  push:
+    paths: ["locations.json", "tools/**", ".github/workflows/zmanim-times.yml"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-save --no-package-lock @hebcal/core@6.14.1
+      - run: node tools/make-times.mjs
+      - name: Commit updated times
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add times
+          git diff --cached --quiet || (git commit -m "Update zmanim times" && git push)
