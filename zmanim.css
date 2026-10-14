@@ -91,6 +91,8 @@ button, input, select { font: inherit; color: inherit; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
 .panel { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
 .panel h3 { font-size: 17px; margin: 0 0 8px; }
+.ph { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ph-btn { background: none; border: 0; padding: 4px 2px; color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 15px; }
 .hint { color: var(--muted); font-size: 15px; margin: 0 0 8px; }
 .note { color: var(--muted); font-size: 15px; margin: 8px 0 0; min-height: 1em; }
 
