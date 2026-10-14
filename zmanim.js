@@ -1,29 +1,35 @@
-/* Zmanim relay page - loaded by the Shelly core script (CORE = its script id, SW = switch id) */
-(function () {
-var BODY = "<div class=\"c\"><h1>Zmanim relay</h1><div class=\"mu\" id=\"now\"></div><div class=\"st\" id=\"st\">...</div><div class=\"row\"><button class=\"bon\" onclick=\"go(&quot;cmd=on&quot;)\">ON</button><button class=\"boff\" onclick=\"go(&quot;cmd=off&quot;)\">OFF</button></div><div class=\"mu\" style=\"margin-top:8px\">Manual switching holds until the next scheduled event.</div></div><div class=\"c\"><h2>Next</h2><div id=\"nx\"></div></div><div class=\"c\"><h2>History</h2><div id=\"hs\"></div></div><div class=\"c\"><h2>Schedules</h2><div id=\"sl\"></div><div class=\"sf\"><h3 id=\"sft\">Add schedule</h3><label>Trigger<select id=\"stg\" onchange=\"sform()\"><option value=\"0\">Fixed time</option><option value=\"1\">Candle lighting</option><option value=\"2\">Havdalah</option></select></label><div id=\"fx\"><label>Time<input type=\"time\" id=\"stm\" value=\"07:00\"></label><div class=\"dy\" id=\"sdy\"></div><label>Skip on Shabbos/YT<input type=\"checkbox\" id=\"ssk\"></label></div><div id=\"zm\"><label>Timing<span><select id=\"sof\" onchange=\"sform()\"><option value=\"0\">At the time</option><option value=\"-1\">Minutes before</option><option value=\"1\">Minutes after</option></select> <input type=\"number\" id=\"smn\" min=\"1\" max=\"180\" value=\"10\"></span></label><label>Applies to<select id=\"sfl\"></select></label></div><label>Action<select id=\"sac\"><option value=\"on\">Switch ON</option><option value=\"off\">Switch OFF</option></select></label><div class=\"row\"><button onclick=\"ssave()\">Save schedule</button><button onclick=\"sreset()\">Clear</button></div><div class=\"mu\" id=\"smsg\" style=\"margin-top:8px\"></div></div></div><div class=\"c\"><h2>Devices on this page</h2><div id=\"dvl\"></div><div class=\"row\"><button onclick=\"dadd()\">Add device</button><button onclick=\"dsave()\">Save devices</button></div><div class=\"mu\" id=\"dmsg\" style=\"margin-top:8px\"></div></div><div class=\"c\"><h2>Settings</h2><div class=\"mu\" style=\"margin-bottom:6px\">Defines when candle lighting and havdalah are. What happens then is set in Schedules.</div><label>Candle lighting (min before sunset)<input type=\"number\" id=\"c\" min=\"0\" max=\"60\"></label><label>Havdalah<select id=\"h\"><option value=\"0\">Tzeit 8.5&deg;</option><option value=\"42\">42 min</option><option value=\"50\">50 min</option><option value=\"60\">60 min</option><option value=\"72\">72 min (Rabbeinu Tam)</option></select></label><div class=\"row\"><button onclick=\"save()\">Save settings</button></div><div class=\"mu\" id=\"msg\" style=\"margin-top:8px\"></div></div><div class=\"row\"><button onclick=\"go(&quot;cmd=refresh&quot;)\">Reload times from Hebcal</button></div>";
-document.getElementById("app").outerHTML = "<main>" + BODY + "</main>";
-})();
+/* Zmanim relay page.
+   Loaded by the Shelly script's starter page, which defines: CORE (script id), SW (switch id), NM (device name), PEERS (fallback list).
+   All devices are shown on one page; tap a device for its details. */
 
-// ---- devices: this Shelly + PEERS (other Shellys running the same script) ----
-var DEVS = [{ base: "", core: CORE, sw: SW, name: window.NM || "This device" }], D = DEVS[0];
-document.querySelector("main").insertAdjacentHTML("afterbegin", '<div class="tabs" id="tabs"></div>');
-function tabs() {
-  if (DEVS.length < 2) { $("tabs").style.display = "none"; return; }
-  $("tabs").style.display = "";
-  $("tabs").innerHTML = DEVS.map(function (d, i) {
-    return '<button class="' + (d === D ? "act" : "") + (d.err ? " terr" : "") + '" onclick="pick(' + i + ')">' + esc(d.name) + "</button>";
-  }).join("");
+// ------------------------------------------------------------------ helpers
+var DN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+var DL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+var SD = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+var FL = ["Every time", "Shabbos only", "Yom Tov only", "First night only"];
+function $(i) { return document.getElementById(i); }
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+function p2(x) { return (x < 10 ? "0" : "") + x; }
+function local(t, off) { return new Date((t + off) * 1000); }        // read with getUTC* = device local time
+function hm(t, off) { var d = local(t, off); return p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()); }
+function dayLabel(t, ref, off) {                                     // "Today", "Tomorrow", "Friday", "Fri 23/10"
+  var a = Math.floor((t + off) / 86400), b = Math.floor((ref + off) / 86400), d = local(t, off);
+  if (a === b) return "Today";
+  if (a === b + 1) return "Tomorrow";
+  if (a - b < 7) return DL[d.getUTCDay()];
+  return DN[d.getUTCDay()] + " " + d.getUTCDate() + "/" + (d.getUTCMonth() + 1);
 }
-function pick(i) {
-  var d = DEVS[i];
-  if (d.err) { $("now").textContent = d.name + ": " + d.err; return; }
-  D = d; filled = false; SJ = []; PZ = []; LD = null; RJ = []; SK = [];
-  document.title = D.name; document.querySelector("h1").textContent = D.name;
-  $("nx").innerHTML = $("hs").innerHTML = $("sl").innerHTML = ""; $("msg").textContent = $("smsg").textContent = "";
-  sreset(); tabs(); go(); sreq();
+function lc(s) { return s === "Today" || s === "Tomorrow" ? s.toLowerCase() : s; }   // "on Friday", "today"
+function until(t, ref) {
+  var m = Math.round((t - ref) / 60);
+  if (m < 60) return "in " + m + " min";
+  var h = Math.round(m / 60);
+  if (h < 36) return "in " + h + " hours";
+  return "in " + Math.round(h / 24) + " days";
 }
-// this device: call its RPC directly. Other devices: relay through this Shelly's
-// built-in HTTP.Request (avoids browser cross-origin blocking; uses no script memory)
+
+// ------------------------------------------------------------------ talking to Shellys
+// This device: its own RPC. Other devices: relayed through this Shelly's built-in HTTP.Request.
 function rpcLocal(method, params) {
   return fetch("/rpc", { method: "POST", body: JSON.stringify({ id: 1, method: method, params: params || {} }) })
     .then(function (r) { return r.json(); })
@@ -43,11 +49,29 @@ function rpcAt(base, method, params) {
 function evalAt(base, id, code) {
   return rpcAt(base, "Script.Eval", { id: id, code: code }).then(function (r) { return r && r.result !== undefined ? r.result : r; });
 }
-// find the zmanim script on a peer: the running script that defines webCmd
-// one request at a time per device: the main Shelly relays every request, and limits how many it handles at once
-function addPeer(ip) {
-  var d = { base: "http://" + ip, ip: ip, name: ip }; DEVS.push(d); tabs();
-  return rpcAt(d.base, "Shelly.GetDeviceInfo").then(function (i) { d.dname = i.name || ""; d.name = i.name || i.id || ip; tabs(); })
+function core(d, q) {
+  return evalAt(d.base, d.core, "webCmd(" + JSON.stringify(q || "") + ")")
+    .then(function (v) { return typeof v === "string" ? JSON.parse(v) : v; });
+}
+
+// ------------------------------------------------------------------ devices
+// d = { base, ip, mac, core, sw, name, dname, err, sum (status from the script), sj (schedules), sk (skip list), rj (zman schedules) }
+var DEVS = [{ base: "", core: CORE, sw: SW, name: window.NM || "This device", sj: [], sk: [] }];
+var SEL = null, PEERS_DIRTY = false;
+
+function parsePeer(s) { var p = String(s).split("#"); return { ip: p[0], mac: (p[1] || "").toLowerCase() }; }
+function savePeers() {
+  var v = DEVS.filter(function (d) { return d.base; }).map(function (d) { return d.ip + (d.mac ? "#" + d.mac : ""); });
+  return rpcLocal("KVS.Set", { key: "zmanim_peers", value: JSON.stringify(v) });
+}
+// check it is the expected device, then find its zmanim script (the running script that defines webCmd)
+function connect(d) {
+  return rpcAt(d.base, "Shelly.GetDeviceInfo").then(function (i) {
+    var mac = String(i.mac || "").toLowerCase();
+    if (d.mac && mac && mac !== d.mac) { var e = new Error("A different device is now at " + d.ip); e.moved = true; throw e; }
+    if (mac && !d.mac) { d.mac = mac; PEERS_DIRTY = true; }
+    d.dname = i.name || ""; d.name = i.name || i.id || d.ip; cards();
+  }, function (e) { e.moved = true; throw e; })
     .then(function () { return rpcAt(d.base, "Script.List"); })
     .then(function (r) {
       var run = (r.scripts || []).filter(function (x) { return x.running; }), found = null;
@@ -59,130 +83,63 @@ function addPeer(ip) {
       }, Promise.resolve()).then(function () { return found; });
     })
     .then(function (id) {
-      if (id === null) throw new Error("zmanim script not running");
+      if (id === null) throw new Error("The zmanim script isn't running on this device");
       d.core = id;
       return evalAt(d.base, id, "CFG.switchId").then(function (sw) { d.sw = +sw || 0; });
-    })
-    .catch(function (e) { d.err = e.message || "not reachable"; })
-    .then(tabs);
-}
-function loadPeers(ips) { return ips.reduce(function (p, ip) { return p.then(function () { return addPeer(ip); }); }, Promise.resolve()); }
-
-// ---- device list editor (list of IPs saved on this Shelly in KVS "zmanim_peers"; names are each Shelly's own device name) ----
-var DE = null;
-function dlist() {
-  if (DE === null) DE = DEVS.map(function (d) { return { ip: d.ip || "", name: d.base ? (d.dname || "") : (DEVS[0].dname || ""), self: !d.base, orig: d.base ? (d.dname || "") : (DEVS[0].dname || "") }; });
-  $("dvl").innerHTML = DE.map(function (e, i) {
-    return '<div class="dv"><input placeholder="Name" value="' + esc(e.name) + '" oninput="DE[' + i + '].name=this.value">' +
-      (e.self ? '<span class="mu dvs">this device</span>' : '<input placeholder="IP address" value="' + esc(e.ip) + '" oninput="DE[' + i + '].ip=this.value.trim()"><button onclick="ddel(' + i + ')">&times;</button>') + "</div>";
-  }).join("");
-}
-function dadd() { DE.push({ ip: "", name: "", self: false, orig: "" }); dlist(); }
-function ddel(i) { DE.splice(i, 1); dlist(); }
-function dsave() {
-  var ips = [], bad = null;
-  DE.forEach(function (e) { if (e.self) return; if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(e.ip)) bad = e.ip || "(empty)"; else ips.push(e.ip); });
-  if (bad) { $("dmsg").textContent = "Invalid IP address: " + bad; return; }
-  if (DE.some(function (e) { return e.name.length > 40; })) { $("dmsg").textContent = "Names must be 40 characters or less"; return; }
-  $("dmsg").textContent = "Saving...";
-  var errs = [], p = rpcLocal("KVS.Set", { key: "zmanim_peers", value: JSON.stringify(ips) });
-  DE.forEach(function (e) {
-    if (e.name === e.orig) return;
-    p = p.then(function () {
-      return rpcAt(e.self ? "" : "http://" + e.ip, "Sys.SetConfig", { config: { device: { name: e.name || null } } })
-        .catch(function (x) { errs.push((e.name || e.ip) + ": " + x.message); });
     });
-  });
-  p.then(function () {
-    if (errs.length) $("dmsg").textContent = "Saved list, but could not rename " + errs.join("; ");
-    else location.reload();
-  }).catch(function (x) { $("dmsg").textContent = "Failed: " + x.message; });
 }
-
-var filled = false, DN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"], SD = ["SUN","MON","TUE","WED","THU","FRI","SAT"], ED = null, PZ = [], SJ = [];
-function $(i) { return document.getElementById(i); }
-function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]; }); }
-
-// Shelly JSON-RPC over HTTP (same origin as this page)
-function rpc(method, params) { return rpcAt(D.base, method, params); }
-function core(q) {
-  var d = D;
-  return evalAt(d.base, d.core, "webCmd(" + JSON.stringify(q || "") + ")")
-    .then(function (v) { if (d !== D) throw new Error("switched"); return typeof v === "string" ? JSON.parse(v) : v; });
+// scan this network (x.x.x.1-254) for a device's MAC, 4 at a time, nearest to its old address first
+function myIp() {
+  return rpcLocal("Wifi.GetStatus").then(function (s) { if (s && s.sta_ip) return s.sta_ip; throw 0; })
+    .catch(function () { return rpcLocal("Eth.GetStatus").then(function (s) { if (s && s.ip) return s.ip; throw 0; }); })
+    .catch(function () { return /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) ? location.hostname : null; });
 }
-
-// ---- status / next / history / settings ----
-function row(e) {
-  var k = e[1] === null ? "pna" : (e[1] ? "pon" : "poff"), a = e[1] === null ? "&ndash;" : (e[1] ? "ON" : "OFF");
-  return '<div class="e' + (e[5] ? " dis" : "") + '"><span class="t">' + esc(e[0]) + '</span><span class="p ' + k + '">' + a + "</span><span>" + esc(e[2]) + "</span></div>";
-}
-// ---- Next: zmanim events + the device's own schedules for the coming 7 days ----
-var LD = null;
-function fmtT(t, off) {
-  var d = new Date((t + off) * 1000), p = function (x) { return (x < 10 ? "0" : "") + x; };
-  return DN[d.getUTCDay()] + " " + p(d.getUTCDate()) + "/" + p(d.getUTCMonth() + 1) + " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
-}
-function renderNext() {
-  if (!LD) return;
-  var d = LD;
-  if (d.ts === undefined) { $("nx").innerHTML = d.next.map(row).join("") || '<div class="mu">none loaded</div>'; return; }
-  var list = d.next.slice(), end = d.ts + 7 * 86400;
-  // Shabbos/YT windows (schedules are paused inside them when that setting is on)
-  var win = [], st = d.holy ? d.ts : null;
-  d.next.forEach(function (e) { if (e[4] === 1 && st === null) st = e[3]; else if (e[4] === 2 && st !== null) { win.push([st, e[3]]); st = null; } });
-  if (st !== null) win.push([st, Infinity]);
-
-  SJ.forEach(function (s) {
-    if (!s.t || s.a === null || !(s.en || PZ.indexOf(s.id) >= 0)) return;
-    var hm = +s.t.slice(0, 2) * 3600 + +s.t.slice(3) * 60, day0 = Math.floor((d.ts + d.off) / 86400);
-    for (var k = 0; k <= 7; k++) {
-      var day = day0 + k; if (s.d.indexOf((day + 4) % 7) < 0) continue;
-      var t = day * 86400 + hm - d.off; if (t <= d.ts || t > end) continue;
-      var skip = SK.indexOf(s.id) >= 0 && win.some(function (w) { return t >= w[0] && t < w[1]; });
-      list.push([fmtT(t, d.off), s.a, skip ? "Schedule - skipped (Shabbos/YT)" : "Schedule", t, 0, skip]);
+function scan(d) {
+  return myIp().then(function (me) {
+    if (!me) return null;
+    var pre = me.split(".").slice(0, 3).join("."), mine = +me.split(".")[3], old = +String(d.ip).split(".")[3] || mine, list = [];
+    for (var n = 1; n < 255; n++) if (n !== mine) list.push(n);
+    list.sort(function (a, b) { return Math.abs(a - old) - Math.abs(b - old); });
+    var next = 0, done = 0, found = null;
+    function worker() {
+      if (found || next >= list.length) return Promise.resolve();
+      var ip = pre + "." + list[next++];
+      return rpcLocal("HTTP.Request", { method: "POST", url: "http://" + ip + "/rpc", timeout: 2,
+          body: JSON.stringify({ id: 1, method: "Shelly.GetDeviceInfo" }) })
+        .then(function (r) { var j = JSON.parse(r.body); if (j.result && String(j.result.mac).toLowerCase() === d.mac) found = ip; })
+        .catch(function () {})
+        .then(function () { done++; d.err = "Looking for this device on the network (" + done + " of " + list.length + ")"; cards(); return worker(); });
     }
+    return Promise.all([worker(), worker(), worker(), worker()]).then(function () { return found; });
   });
-  // hide a zman's "–" info line when a zman schedule already switches at (or within 3h of) that zman
-  list = list.filter(function (e) {
-    if (e[1] !== null || !e[4]) return true;
-    var name = e[4] === 1 ? "Candle lighting" : "Havdalah";
-    return !list.some(function (x) { return x[4] === 0 && x[1] !== null && String(x[2]).indexOf(name) === 0 && Math.abs(x[3] - e[3]) <= 10800; });
-  });
-  list.sort(function (a, b) { return a[3] - b[3]; });
-  $("nx").innerHTML = list.map(row).join("") || '<div class="mu">none loaded</div>';
 }
-function show(d) {
-  var age = d.made ? Math.floor((d.ts - d.made) / 86400) : -1;
-  $("now").textContent = d.now + (d.made === 0 ? " \u00b7 \u26a0 no zmanim times loaded" : (age >= 3 ? " \u00b7 \u26a0 times file " + age + " days old - check the GitHub job" : ""));
-  $("now").style.color = (d.made === 0 || age >= 3) ? "var(--off)" : "";
-  var s = $("st"); s.textContent = d.relay ? "ON" : "OFF"; s.style.color = d.relay ? "var(--on)" : "var(--off)";
-  LD = d; renderNext();
-  $("hs").innerHTML = d.hist.map(row).join("") || '<div class="mu">none yet</div>';
-  if (!filled && d.cfg) {
-    var c = d.cfg;
-    $("c").value = c.c; $("h").value = c.h; filled = true;
-  }
-  if (d.msg) $("msg").textContent = d.msg;
-  PZ = d.paused || [];
-  slist(SJ);
+function addPeer(entry) {
+  var e = parsePeer(entry), d = { base: "http://" + e.ip, ip: e.ip, mac: e.mac, name: e.ip, sj: [], sk: [], err: "Connecting" };
+  DEVS.push(d); cards();
+  return connect(d).catch(function (err) {
+    if (!err.moved || !d.mac) throw err;
+    d.err = "Looking for this device on the network"; cards();
+    return scan(d).then(function (ip) {
+      if (!ip) throw new Error("Not found on this network");
+      d.ip = ip; d.base = "http://" + ip; PEERS_DIRTY = true;
+      return connect(d);
+    });
+  })
+    .then(function () { d.err = null; return refreshDev(d, true); })
+    .catch(function (x) { d.err = x.message || "Not reachable"; d.dead = true; cards(); });
 }
-function go(q) {
-  core(q).then(show).catch(function (e) { if (e.message !== "switched") $("now").textContent = "Zmanim script not reachable: " + e.message; });
-  if (q) setTimeout(function () { go(); sreq(); }, 3000);
-}
-function save() {
-  go("set=1&c=" + $("c").value + "&h=" + $("h").value + "&il=0&ps=1");
+function loadPeers(ips) {
+  return ips.reduce(function (p, ip) { return p.then(function () { return addPeer(ip); }); }, Promise.resolve())
+    .then(function () { if (PEERS_DIRTY) { PEERS_DIRTY = false; DE = null; return savePeers().catch(function () {}); } });
 }
 
-// ---- schedules (Shelly's own Schedule component, called directly) ----
-function dayIdx(s) { var i = SD.indexOf(String(s).toUpperCase()); if (i >= 0) return i; var n = parseInt(s, 10); return n >= 0 && n <= 7 && String(n) === s ? n % 7 : -1; }
-function parseSpec(ts) {
+// ------------------------------------------------------------------ data per device
+function parseSpec(ts) {                       // "0 30 7 * * MON,WED" -> {t:"07:30", d:[1,3]}
   var p = String(ts).trim().split(/\s+/);
   if (p.length !== 6 || p[0] !== "0" || p[3] !== "*" || p[4] !== "*") return null;
-  var mi = +p[1], hr = +p[2];
-  if (!/^\d+$/.test(p[1]) || !/^\d+$/.test(p[2]) || mi > 59 || hr > 23) return null;
+  if (!/^\d+$/.test(p[1]) || !/^\d+$/.test(p[2]) || +p[1] > 59 || +p[2] > 23) return null;
   var d = [];
-  if (p[5] === "*") d = [0,1,2,3,4,5,6];
+  if (p[5] === "*") d = [0, 1, 2, 3, 4, 5, 6];
   else {
     var items = p[5].split(",");
     for (var i = 0; i < items.length; i++) {
@@ -192,150 +149,357 @@ function parseSpec(ts) {
         for (var k = a, g = 0; g < 7; g++) { d.push(k); if (k === b) break; k = (k + 1) % 7; }
       } else { var k2 = dayIdx(items[i]); if (k2 < 0) return null; d.push(k2); }
     }
-    d = [0,1,2,3,4,5,6].filter(function (x) { return d.indexOf(x) >= 0; });
+    d = [0, 1, 2, 3, 4, 5, 6].filter(function (x) { return d.indexOf(x) >= 0; });
   }
-  return { t: (hr < 10 ? "0" : "") + hr + ":" + (mi < 10 ? "0" : "") + mi, d: d };
+  return { t: p2(+p[2]) + ":" + p2(+p[1]), d: d };
 }
+function dayIdx(s) { var i = SD.indexOf(String(s).toUpperCase()); if (i >= 0) return i; var n = parseInt(s, 10); return n >= 0 && n <= 7 && String(n) === s ? n % 7 : -1; }
 function jobAction(j) {
   if (!j.calls || j.calls.length !== 1) return null;
   var c = j.calls[0];
   if (!c.method || c.method.toLowerCase() !== "switch.set" || !c.params) return null;
   return c.params.on === true ? true : (c.params.on === false ? false : null);
 }
-// ---- zman schedules (run by the script; saved on the device in KVS "zmanim_rules") ----
-// rule = [type 1=candle 2=havdalah, offset min, on 1/0, filter 0=all 1=Shabbos 2=YT 3=first night, enabled 1/0]
-var SK = [];   // schedule ids that skip Shabbos/YT (KVS "zmanim_skip")
-function skload() {
-  var d = D;
-  return rpc("KVS.Get", { key: "zmanim_skip" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return []; })
-    .then(function (x) { if (d === D) { SK = x; slist(SJ); } });
+function loadSchedules(d) {                    // one request at a time: the main Shelly relays requests for the others
+  return rpcAt(d.base, "Schedule.List").then(function (r) {
+    d.sj = (r.jobs || []).map(function (j) {
+      var ps = parseSpec(j.timespec || ""), a = jobAction(j), m = j.calls && j.calls[0] && j.calls[0].method;
+      return { id: j.id, en: !!j.enable, t: ps && ps.t, d: ps && ps.d, a: a, ts: j.timespec, fx: !!(ps && a !== null), m: m };
+    });
+  })
+    .then(function () { return rpcAt(d.base, "KVS.Get", { key: "zmanim_skip" }).then(function (r) { d.sk = JSON.parse(r.value); }).catch(function () { d.sk = []; }); })
+    .then(function () { return rpcAt(d.base, "KVS.Get", { key: "zmanim_rules" }).then(function (r) { d.rj = JSON.parse(r.value); }).catch(function () { d.rj = []; }); });
 }
-function sksave() { return rpc("KVS.Set", { key: "zmanim_skip", value: JSON.stringify(SK) }); }
-function skset(id, on) { var i = SK.indexOf(id); if (on && i < 0) SK.push(id); if (!on && i >= 0) SK.splice(i, 1); return sksave(); }
-function sktog(i) { var s = SJ[i]; sdo(skset(s.id, SK.indexOf(s.id) < 0)); }
-var RJ = [], FL = ["Every time", "Shabbos only", "Yom Tov only", "First night only"];
-function rload() {
-  var d = D;
-  return rpc("KVS.Get", { key: "zmanim_rules" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return []; })
-    .then(function (x) { if (d === D) { RJ = x; slist(SJ); } });
+function refreshDev(d, withSchedules) {
+  if (d.core === undefined) return Promise.resolve();
+  var p = withSchedules ? loadSchedules(d).catch(function () {}) : Promise.resolve();
+  return p.then(function () { return core(d, ""); })
+    .then(function (s) { d.sum = s; d.err = null; render(d); })
+    .catch(function (e) { d.err = "Not reachable just now (" + e.message + ")"; cards(); });
 }
-function rsave() {
-  var v = JSON.stringify(RJ);
-  if (v.length > 250) { $("smsg").textContent = "Too many zman schedules for the device's storage"; return Promise.reject(new Error("too many")); }
-  return rpc("KVS.Set", { key: "zmanim_rules", value: v }).then(function () { return core("cmd=refresh"); })
-    .then(function () { setTimeout(function () { go(); }, 3000); });
+// upcoming events for a device: zmanim events from the script + its fixed-time schedules, next 7 days
+function upcoming(d) {
+  var s = d.sum; if (!s || s.ts === undefined) return [];
+  var list = s.next.map(function (e) { return { t: e[3], on: e[1], why: e[2], kind: e[4] }; }), end = s.ts + 7 * 86400;
+  var win = [], st = s.holy ? s.ts : null, paused = s.paused || [];
+  s.next.forEach(function (e) { if (e[4] === 1 && st === null) st = e[3]; else if (e[4] === 2 && st !== null) { win.push([st, e[3]]); st = null; } });
+  if (st !== null) win.push([st, Infinity]);
+  (d.sj || []).forEach(function (j) {
+    if (!j.t || j.a === null || !(j.en || paused.indexOf(j.id) >= 0)) return;
+    var sec = +j.t.slice(0, 2) * 3600 + +j.t.slice(3) * 60, day0 = Math.floor((s.ts + s.off) / 86400);
+    for (var k = 0; k <= 7; k++) {
+      var day = day0 + k; if (j.d.indexOf((day + 4) % 7) < 0) continue;
+      var t = day * 86400 + sec - s.off; if (t <= s.ts || t > end) continue;
+      var skip = (d.sk || []).indexOf(j.id) >= 0 && win.some(function (w) { return t >= w[0] && t < w[1]; });
+      list.push({ t: t, on: j.a, why: skip ? "Schedule, skipped for Shabbos/Yom Tov" : "Schedule", kind: 0, skip: skip });
+    }
+  });
+  // hide a zman's information line when a zman schedule already switches near it
+  list = list.filter(function (e) {
+    if (e.on !== null || !e.kind) return true;
+    var name = e.kind === 1 ? "Candle lighting" : "Havdalah";
+    return !list.some(function (x) { return x.kind === 0 && x.on !== null && String(x.why).indexOf(name) === 0 && Math.abs(x.t - e.t) <= 10800; });
+  });
+  return list.sort(function (a, b) { return a.t - b.t; });
 }
+function statusNote(s) {
+  if (!s) return null;
+  if (s.made === 0) return "No zmanim times loaded";
+  if (s.made && s.ts - s.made >= 3 * 86400) return "Zmanim file is " + Math.floor((s.ts - s.made) / 86400) + " days old. Check the GitHub job.";
+  return null;
+}
+
+// ------------------------------------------------------------------ rendering
+function render(d) { hero(); cards(); if (d === SEL) details(); }
+
+// the next candle lighting / havdalah, from this device's times
+function hero() {
+  var s = DEVS[0].sum, el = $("hero");
+  if (!s || s.ts === undefined) { el.innerHTML = '<p class="hero-wait">Loading zmanim</p>'; return; }
+  var seen = {}, zs = [];                       // one entry per zman (the script's info markers)
+  s.next.forEach(function (e) { if ((e[4] === 1 || e[4] === 2) && e[1] === null && !seen[e[3]]) { seen[e[3]] = 1; zs.push(e); } });
+  if (!zs.length) { el.innerHTML = '<p class="hero-wait">' + esc(statusNote(s) || "No candle lighting or havdalah in the next week") + "</p>"; return; }
+  function name(e) { return e[4] === 1 ? "Candle lighting" : "Havdalah"; }
+  function memo(e) { var i = e[2].indexOf(" - "); return i > 0 ? e[2].slice(i + 3) : ""; }
+  var a = zs[0], b = zs[1];
+  el.innerHTML =
+    '<p class="hero-kind">' + name(a) + (memo(a) && memo(a) !== "Shabbat" ? ", " + esc(memo(a)) : "") + "</p>" +
+    '<p class="hero-time">' + hm(a[3], s.off) + "</p>" +
+    '<p class="hero-when">' + dayLabel(a[3], s.ts, s.off) + ", " + until(a[3], s.ts) + "</p>" +
+    (b ? '<p class="hero-then">Then ' + name(b).toLowerCase() + " " + (/^(Today|Tomorrow)$/.test(dayLabel(b[3], s.ts, s.off)) ? "" : "on ") + lc(dayLabel(b[3], s.ts, s.off)) + " at " + hm(b[3], s.off) + "</p>" : "");
+}
+
+function cards() {
+  $("cards").innerHTML = DEVS.map(function (d, i) {
+    var s = d.sum, on = s && s.relay, note = d.err || statusNote(s), nx = null;
+    if (s) upcoming(d).some(function (e) { if (e.on !== null && !e.skip) { nx = e; return true; } });
+    var nextTxt = !s ? "" : nx ? "Turns " + (nx.on ? "on" : "off") + " " + (/^(Today|Tomorrow)$/.test(dayLabel(nx.t, s.ts, s.off)) ? "" : "on ") + lc(dayLabel(nx.t, s.ts, s.off)) + " at " + hm(nx.t, s.off) : "Nothing scheduled this week";
+    var ready = s && d.core !== undefined && !d.dead;
+    return '<article class="dev' + (on ? " is-on" : "") + (d === SEL ? " is-sel" : "") + (ready ? "" : " is-wait") + '">' +
+      '<button class="dev-head" onclick="pick(' + i + ')" aria-expanded="' + (d === SEL) + '">' +
+        '<span class="lamp" aria-hidden="true"></span>' +
+        '<span class="dev-name">' + esc(d.name) + "</span>" +
+        '<span class="dev-state">' + (s ? (on ? "On" : "Off") : "") + "</span>" +
+        '<span class="chev" aria-hidden="true"></span>' +
+      "</button>" +
+      (nextTxt ? '<p class="dev-next">' + esc(nextTxt) + "</p>" : "") +
+      (note ? '<p class="dev-note">' + esc(note) + "</p>" : "") +
+      '<div class="dev-ctl">' +
+        '<button class="b-on" onclick="sw(' + i + ',1)"' + (ready ? "" : " disabled") + ">Turn on</button>" +
+        '<button class="b-off" onclick="sw(' + i + ',0)"' + (ready ? "" : " disabled") + ">Turn off</button>" +
+      "</div>" +
+    "</article>";
+  }).join("");
+}
+function sw(i, on) {
+  var d = DEVS[i];
+  core(d, on ? "cmd=on" : "cmd=off").then(function () { setTimeout(function () { refreshDev(d); }, 1200); })
+    .catch(function (e) { d.err = "Couldn't switch (" + e.message + ")"; cards(); });
+}
+function pick(i) {
+  var d = DEVS[i];
+  if (d.core === undefined) return;
+  SEL = SEL === d ? null : d;
+  ED = null; FILLED = false; msg(""); $("cmsg").textContent = "";
+  if (SEL) sreset();
+  cards(); details();
+  if (SEL) { $("detail").scrollIntoView({ behavior: "smooth", block: "start" }); refreshDev(d, true); }
+}
+
+// ------------------------------------------------------------------ details of the selected device
+var ED = null, FILLED = false;
+function details() {
+  var el = $("detail");
+  if (!SEL) { el.hidden = true; return; }
+  el.hidden = false;
+  var d = SEL, s = d.sum;
+  $("det-name").textContent = d.name;
+  var up = upcoming(d);
+  $("up").innerHTML = !s ? '<li class="empty">Loading</li>' : up.length ? up.map(function (e) {
+    return '<li class="ev' + (e.skip ? " skip" : "") + (e.on === null ? " info" : "") + '">' +
+      '<span class="ev-when">' + esc(dayLabel(e.t, s.ts, s.off)) + "<b>" + hm(e.t, s.off) + "</b></span>" +
+      '<span class="ev-act ' + (e.on === null ? "" : e.on ? "on" : "off") + '">' + (e.on === null ? "" : e.on ? "On" : "Off") + "</span>" +
+      '<span class="ev-why">' + esc(e.why) + "</span></li>";
+  }).join("") : '<li class="empty">Nothing in the next 7 days</li>';
+  $("hist").innerHTML = !s ? "" : s.hist.length ? s.hist.map(function (e) {
+    var p = String(e[0]).split(" ");           // "Fri 09/10 18:25"
+    return '<li class="ev"><span class="ev-when">' + esc(p[0] + " " + (p[1] || "")) + "<b>" + esc(p[2] || "") + '</b></span><span class="ev-act ' + (e[1] ? "on" : "off") + '">' + (e[1] ? "On" : "Off") + '</span><span class="ev-why">' + esc(e[2]) + "</span></li>";
+  }).join("") : '<li class="empty">No switching recorded yet</li>';
+  slist();
+  if (s && !FILLED && s.cfg) { $("c").value = s.cfg.c; $("h").value = s.cfg.h; FILLED = true; }
+}
+
+// ---- schedules
+function dtxt(d) { return d.length === 7 ? "Every day" : d.map(function (x) { return DN[x]; }).join(", "); }
 function rtxt(r) {
-  return (r[0] === 1 ? "Candle lighting" : "Havdalah") + (r[1] ? " " + Math.abs(r[1]) + " min " + (r[1] < 0 ? "before" : "after") : "") +
-    (r[3] ? " &middot; " + FL[r[3]] : "");
+  return (r[0] === 1 ? "Candle lighting" : "Havdalah") + (r[1] ? ", " + Math.abs(r[1]) + " min " + (r[1] < 0 ? "before" : "after") : "");
 }
+function slist() {
+  var d = SEL, s = d.sum, paused = (s && s.paused) || [], h = "";
+  (d.sj || []).forEach(function (j, i) {
+    var p = paused.indexOf(j.id) >= 0, skip = d.sk.indexOf(j.id) >= 0;
+    var what = j.a !== null ? (j.a ? "On" : "Off") : (j.m === "Shelly.Update" ? "Firmware update" : esc(j.m || "Other action"));
+    var tags = (skip ? '<span class="tag">Skips Shabbos/Yom Tov</span>' : "") + (p ? '<span class="tag">Paused now</span>' : "");
+    h += '<li class="sch' + (j.en || p ? "" : " off") + '">' +
+      '<div class="sch-main"><span class="sch-when">' + (j.t || "Custom") + "</span>" +
+        '<span class="sch-what ' + (j.a === null ? "" : j.a ? "on" : "off") + '">' + what + "</span>" +
+        '<span class="sch-days">' + (j.t ? dtxt(j.d) : esc(j.ts)) + "</span>" + tags + "</div>" +
+      '<div class="sch-ctl">' +
+        (j.fx ? "" : '<button onclick="sktog(' + i + ')">' + (skip ? "Run on Shabbos" : "Skip Shabbos") + "</button>") +
+        '<button onclick="sen(' + i + ')">' + (j.en || p ? "Disable" : "Enable") + "</button>" +
+        (j.fx ? '<button onclick="sedit(' + i + ')">Edit</button>' : "") +
+        '<button onclick="sdel(' + i + ')">Delete</button></div></li>';
+  });
+  (d.rj || []).forEach(function (r, i) {
+    h += '<li class="sch' + (r[4] ? "" : " off") + '">' +
+      '<div class="sch-main"><span class="sch-when">' + rtxt(r) + "</span>" +
+        '<span class="sch-what ' + (r[2] ? "on" : "off") + '">' + (r[2] ? "On" : "Off") + "</span>" +
+        (r[3] ? '<span class="sch-days">' + FL[r[3]] + "</span>" : '<span class="sch-days">Every time</span>') + "</div>" +
+      '<div class="sch-ctl"><button onclick="ren(' + i + ')">' + (r[4] ? "Disable" : "Enable") + '</button>' +
+        '<button onclick="redit(' + i + ')">Edit</button><button onclick="rdel(' + i + ')">Delete</button></div></li>';
+  });
+  $("sl").innerHTML = h || '<li class="empty">No schedules yet. Add one below.</li>';
+}
+function msg(t) { $("smsg").textContent = t || ""; }
+function after(p) {                              // run a change, then reload this device's schedules and status
+  var d = SEL; msg("Saving");
+  return p.then(function () { return refreshDev(d, true); }).catch(function (e) { msg("Failed: " + e.message); throw e; });
+}
+function skset(d, id, on) { var i = d.sk.indexOf(id); if (on && i < 0) d.sk.push(id); if (!on && i >= 0) d.sk.splice(i, 1); return rpcAt(d.base, "KVS.Set", { key: "zmanim_skip", value: JSON.stringify(d.sk) }); }
+function sktog(i) { var d = SEL, j = d.sj[i]; after(skset(d, j.id, d.sk.indexOf(j.id) < 0)).then(function () { msg(""); }); }
+function sen(i) {
+  var d = SEL, j = d.sj[i];
+  if (((d.sum && d.sum.paused) || []).indexOf(j.id) >= 0) { msg("Paused for Shabbos/Yom Tov. It resumes at havdalah."); return; }
+  after(rpcAt(d.base, "Schedule.Update", { id: j.id, enable: !j.en })).then(function () { msg(""); });
+}
+function sdel(i) {
+  var d = SEL, id = d.sj[i].id;
+  if (confirm("Delete this schedule?")) after(rpcAt(d.base, "Schedule.Delete", { id: id }).then(function () { return d.sk.indexOf(id) >= 0 ? skset(d, id, false) : null; })).then(function () { sreset(); msg("Deleted"); });
+}
+function rsave(d) {
+  var v = JSON.stringify(d.rj);
+  if (v.length > 250) return Promise.reject(new Error("too many zman schedules for the device's storage"));
+  return rpcAt(d.base, "KVS.Set", { key: "zmanim_rules", value: v }).then(function () { return core(d, "cmd=refresh"); })
+    .then(function () { return new Promise(function (ok) { setTimeout(ok, 2500); }); });
+}
+function rchange(f) { var d = SEL, old = JSON.stringify(d.rj || []); d.rj = d.rj || []; f(d.rj); return after(rsave(d).catch(function (e) { d.rj = JSON.parse(old); throw e; })); }
+function ren(i) { rchange(function (rj) { rj[i][4] = rj[i][4] ? 0 : 1; }).then(function () { msg(""); }); }
+function rdel(i) { if (confirm("Delete this schedule?")) rchange(function (rj) { rj.splice(i, 1); }).then(function () { sreset(); msg("Deleted"); }); }
+
+// ---- add / edit form
 function sform() {
-  var tg = +$("stg").value, z = tg > 0;
-  $("fx").style.display = z ? "none" : ""; $("zm").style.display = z ? "" : "none";
-  $("smn").style.display = $("sof").value === "0" ? "none" : "";
+  var tg = +$("stg").value;
+  $("fx").hidden = tg > 0; $("zm").hidden = tg === 0;
+  $("smn").hidden = $("sof").value === "0";
   var opts = tg === 2 ? FL.slice(0, 3) : FL, cur = $("sfl").value;
   $("sfl").innerHTML = opts.map(function (t, i) { return '<option value="' + i + '">' + t + "</option>"; }).join("");
   if (cur && +cur < opts.length) $("sfl").value = cur;
 }
-
-function sreq() {
-  var d = D;
-  rload(); skload();
-  return rpc("Schedule.List").then(function (r) {
-    if (d !== D) return;
-    SJ = (r.jobs || []).map(function (j) { var ps = parseSpec(j.timespec || ""); var a = jobAction(j), m = j.calls && j.calls[0] && j.calls[0].method;
-      return { id: j.id, en: !!j.enable, t: ps && ps.t, d: ps && ps.d, a: a, ts: j.timespec, fx: !!(ps && a !== null), m: m }; });
-    slist(SJ);
-  }).catch(function (e) { $("smsg").textContent = "Could not read schedules: " + e.message; });
+function dsty() { for (var i = 0; i < 7; i++) $("dl" + i).classList.toggle("on", $("d" + i).checked); }
+function sreset() {
+  ED = null; $("sft").textContent = "Add a schedule"; $("stg").value = "0"; $("sof").value = "0"; $("ssk").checked = false;
+  for (var k = 0; k < 7; k++) $("d" + k).checked = false;
+  dsty(); sform();
 }
-function dtxt(d) { return d.length === 7 ? "Every day" : d.map(function (x) { return DN[x]; }).join(" "); }
-function slist(j) {
-  var h = "";
-  j.forEach(function (s, i) {
-    var p = PZ.indexOf(s.id) >= 0;
-    var what = s.a !== null ? "" : " &middot; " + (s.m === "Shelly.Update" ? "Firmware update" : esc(s.m || "other action"));
-    h += '<div class="sr' + (s.en || p ? "" : " dis") + '"><span class="x"><b>' + (s.t || "custom") + "</b> " +
-      (s.a === null ? "" : '<span class="' + (s.a ? "pon" : "poff") + '">' + (s.a ? "ON" : "OFF") + "</span> ") +
-      (s.t ? dtxt(s.d) : esc(s.ts)) + what + (SK.indexOf(s.id) >= 0 ? ' <span class="tag">skips Shabbos/YT</span>' : "") + (p ? ' <span class="tag">paused now</span>' : "") + "</span>" +
-      (s.fx ? "" : '<button onclick="sktog(' + i + ')">' + (SK.indexOf(s.id) >= 0 ? "Run on Shabbos" : "Skip Shabbos") + "</button>") +
-      '<button onclick="sen(' + i + ')">' + (s.en || p ? "Disable" : "Enable") + "</button>" +
-      (s.fx ? '<button onclick="sedit(' + i + ')">Edit</button>' : "") + '<button onclick="sdel(' + i + ')">&times;</button></div>';
-  });
-  RJ.forEach(function (r, i) {
-    h += '<div class="sr' + (r[4] ? "" : " dis") + '"><span class="x"><b>' + rtxt(r) + "</b> " +
-      '<span class="' + (r[2] ? "pon" : "poff") + '">' + (r[2] ? "ON" : "OFF") + "</span></span>" +
-      '<button onclick="ren(' + i + ')">' + (r[4] ? "Disable" : "Enable") + '</button><button onclick="redit(' + i + ')">Edit</button><button onclick="rdel(' + i + ')">&times;</button></div>';
-  });
-  $("sl").innerHTML = h || '<div class="mu">No schedules</div>';
-  renderNext();
-}
-function sdo(p) { $("smsg").textContent = ""; return p.then(sreq).catch(function (e) { $("smsg").textContent = "Failed: " + e.message; throw e; }); }
-function sen(i) {
-  var s = SJ[i];
-  if (PZ.indexOf(s.id) >= 0) { $("smsg").textContent = "Paused for Shabbos/YT - it will resume at havdalah"; return; }
-  sdo(rpc("Schedule.Update", { id: s.id, enable: !s.en }));
-}
-function sdel(i) { var id = SJ[i].id; if (confirm("Delete this schedule?")) sdo(rpc("Schedule.Delete", { id: id }).then(function () { return SK.indexOf(id) >= 0 ? skset(id, false) : null; })).then(sreset); }
 function sedit(i) {
-  var s = SJ[i]; ED = s.id; $("sft").textContent = "Edit schedule"; $("stg").value = "0"; sform(); $("stm").value = s.t;
-  for (var k = 0; k < 7; k++) $("d" + k).checked = s.d.indexOf(k) >= 0;
-  dsty(); $("sac").value = s.a ? "on" : "off"; $("ssk").checked = SK.indexOf(s.id) >= 0; $("smsg").textContent = "";
+  var j = SEL.sj[i]; ED = j.id; $("sft").textContent = "Edit schedule";
+  $("stg").value = "0"; sform(); $("stm").value = j.t;
+  for (var k = 0; k < 7; k++) $("d" + k).checked = j.d.indexOf(k) >= 0;
+  dsty(); $("sac").value = j.a ? "on" : "off"; $("ssk").checked = SEL.sk.indexOf(j.id) >= 0; msg("");
+  $("sform").scrollIntoView({ behavior: "smooth", block: "center" });
 }
-function rdo(f) { $("smsg").textContent = ""; f(); return rsave().then(function () { slist(SJ); }).catch(function (e) { $("smsg").textContent = "Failed: " + e.message; return rload(); }); }
-function ren(i) { rdo(function () { RJ[i][4] = RJ[i][4] ? 0 : 1; }); }
-function rdel(i) { if (confirm("Delete this schedule?")) rdo(function () { RJ.splice(i, 1); }).then(sreset); }
 function redit(i) {
-  var r = RJ[i]; ED = "r" + i; $("sft").textContent = "Edit schedule";
+  var r = SEL.rj[i]; ED = "r" + i; $("sft").textContent = "Edit schedule";
   $("stg").value = r[0]; $("sof").value = r[1] < 0 ? "-1" : (r[1] > 0 ? "1" : "0"); $("smn").value = Math.abs(r[1]) || 10;
-  sform(); $("sfl").value = r[3]; $("sac").value = r[2] ? "on" : "off"; $("smsg").textContent = "";
+  sform(); $("sfl").value = r[3]; $("sac").value = r[2] ? "on" : "off"; msg("");
+  $("sform").scrollIntoView({ behavior: "smooth", block: "center" });
 }
-function sreset() { ED = null; $("stg").value = "0"; $("sof").value = "0"; $("ssk").checked = false; sform(); $("sft").textContent = "Add schedule"; for (var k = 0; k < 7; k++) $("d" + k).checked = false; dsty(); }
-function dsty() { for (var i = 0; i < 7; i++) $("dl" + i).className = $("d" + i).checked ? "on" : ""; }
+function done() { sreset(); msg("Saved"); }
 function ssave() {
-  var tg = +$("stg").value;
+  var d = SEL, tg = +$("stg").value, on = $("sac").value === "on";
   if (tg > 0) {
     var sg = +$("sof").value, mn = Math.round(+$("smn").value);
-    if (sg !== 0 && !(mn >= 1 && mn <= 180)) { $("smsg").textContent = "Minutes must be 1-180"; return; }
-    var r = [tg, sg * (sg ? mn : 0), $("sac").value === "on" ? 1 : 0, +$("sfl").value, 1];
-    if (typeof ED === "string") { var i = +ED.slice(1); r[4] = RJ[i][4]; }
-    if (ED !== null && typeof ED !== "string") {
-      // editing a fixed-time schedule into a zman one: remove the fixed one
+    if (sg !== 0 && !(mn >= 1 && mn <= 180)) { msg("Minutes must be between 1 and 180"); return; }
+    var r = [tg, sg ? sg * mn : 0, on ? 1 : 0, +$("sfl").value, 1];
+    if (typeof ED === "string") {
+      var ri = +ED.slice(1); r[4] = d.rj[ri][4];
+      rchange(function (rj) { rj[ri] = r; }).then(done);
+    } else if (ED !== null) {                     // fixed-time schedule changed into a zman one
       var old = ED;
-      rdo(function () { RJ.push(r); }).then(function () { return sdo(rpc("Schedule.Delete", { id: old })); }).then(function () { sreset(); $("smsg").textContent = "Saved"; });
-      return;
-    }
-    rdo(function () { if (typeof ED === "string") RJ[+ED.slice(1)] = r; else RJ.push(r); }).then(function () { sreset(); $("smsg").textContent = "Saved"; });
+      rchange(function (rj) { rj.push(r); }).then(function () { return after(rpcAt(d.base, "Schedule.Delete", { id: old })); }).then(done);
+    } else rchange(function (rj) { rj.push(r); }).then(done);
     return;
   }
-  var d = []; for (var k = 0; k < 7; k++) if ($("d" + k).checked) d.push(k);
+  var days = []; for (var k = 0; k < 7; k++) if ($("d" + k).checked) days.push(k);
   var t = $("stm").value;
-  if (!d.length) { $("smsg").textContent = "Pick at least one day"; return; }
-  if (!/^\d\d:\d\d$/.test(t)) { $("smsg").textContent = "Enter a time"; return; }
-  var ts = "0 " + (+t.slice(3)) + " " + (+t.slice(0, 2)) + " * * " + (d.length === 7 ? "*" : d.map(function (x) { return SD[x]; }).join(","));
-  var p = { enable: true, timespec: ts, calls: [{ method: "Switch.Set", params: { id: D.sw, on: $("sac").value === "on" } }] };
-  if (typeof ED === "string") {
-    // editing a zman schedule into a fixed-time one: create the fixed one, then remove the zman one
-    var ri = +ED.slice(1);
-    var sk1 = $("ssk").checked;
-    sdo(rpc("Schedule.Create", p).then(function (c) { return sk1 ? skset(c.id, true) : null; })).then(function () { return rdo(function () { RJ.splice(ri, 1); }); }).then(function () { sreset(); $("smsg").textContent = "Saved"; });
+  if (!days.length) { msg("Pick at least one day"); return; }
+  if (!/^\d\d:\d\d$/.test(t)) { msg("Enter a time"); return; }
+  var ts = "0 " + (+t.slice(3)) + " " + (+t.slice(0, 2)) + " * * " + (days.length === 7 ? "*" : days.map(function (x) { return SD[x]; }).join(","));
+  var p = { enable: true, timespec: ts, calls: [{ method: "Switch.Set", params: { id: d.sw, on: on } }] }, sk = $("ssk").checked;
+  if (typeof ED === "string") {                   // zman schedule changed into a fixed-time one
+    var zi = +ED.slice(1);
+    after(rpcAt(d.base, "Schedule.Create", p).then(function (c) { return skset(d, c.id, sk); }))
+      .then(function () { return rchange(function (rj) { rj.splice(zi, 1); }); }).then(done);
     return;
   }
-  if (ED !== null) p.id = ED;
-  var sk = $("ssk").checked, eid = ED;
-  sdo(rpc(ED === null ? "Schedule.Create" : "Schedule.Update", p).then(function (c) { return skset(eid === null ? c.id : eid, sk); }))
-    .then(function () { sreset(); $("smsg").textContent = "Saved"; });
+  var eid = ED; if (eid !== null) p.id = eid;
+  after(rpcAt(d.base, eid === null ? "Schedule.Create" : "Schedule.Update", p).then(function (c) { return skset(d, eid === null ? c.id : eid, sk); })).then(done);
 }
 
+// ---- zmanim settings (per device)
+function save() {
+  var d = SEL;
+  $("cmsg").textContent = "Saving";
+  core(d, "set=1&c=" + $("c").value + "&h=" + $("h").value + "&il=0&ps=1").then(function (s) {
+    $("cmsg").textContent = /^Saved/.test(s.msg || "Saved") ? "Saved. Times are being recalculated." : s.msg;
+    setTimeout(function () { refreshDev(d); }, 2500);
+  }).catch(function (e) { $("cmsg").textContent = "Failed: " + e.message; });
+}
+
+// ------------------------------------------------------------------ device list editor
+var DE = null;
+function dlist() {
+  if (DE === null) DE = DEVS.map(function (d) {
+    var nm = d.base ? (d.dname || "") : (DEVS[0].dname || "");
+    return { ip: d.ip || "", oip: d.ip || "", mac: d.mac || "", name: nm, orig: nm, self: !d.base };
+  });
+  $("dvl").innerHTML = DE.map(function (e, i) {
+    return '<li class="dv"><input aria-label="Name" placeholder="Name" value="' + esc(e.name) + '" oninput="DE[' + i + '].name=this.value">' +
+      (e.self ? '<span class="dv-self">This device</span>' :
+        '<input aria-label="IP address" placeholder="IP address" inputmode="decimal" value="' + esc(e.ip) + '" oninput="DE[' + i + '].ip=this.value.trim()">' +
+        '<button onclick="ddel(' + i + ')">Remove</button>') + "</li>";
+  }).join("");
+}
+function dadd() { DE.push({ ip: "", oip: "", mac: "", name: "", orig: "", self: false }); dlist(); }
+function ddel(i) { DE.splice(i, 1); dlist(); }
+function dsave() {
+  var ips = [], bad = null;
+  DE.forEach(function (e) { if (e.self) return; if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(e.ip)) bad = e.ip || "(empty)"; else ips.push(e.ip + (e.mac && e.ip === e.oip ? "#" + e.mac : "")); });
+  if (bad) { $("dmsg").textContent = "Not a valid IP address: " + bad; return; }
+  if (DE.some(function (e) { return e.name.length > 40; })) { $("dmsg").textContent = "Names can be up to 40 characters"; return; }
+  $("dmsg").textContent = "Saving";
+  var errs = [], p = rpcLocal("KVS.Set", { key: "zmanim_peers", value: JSON.stringify(ips) });
+  DE.forEach(function (e) {
+    if (e.name === e.orig) return;
+    p = p.then(function () {
+      return rpcAt(e.self ? "" : "http://" + e.ip, "Sys.SetConfig", { config: { device: { name: e.name || null } } })
+        .catch(function (x) { errs.push((e.name || e.ip) + ": " + x.message); });
+    });
+  });
+  p.then(function () {
+    if (errs.length) $("dmsg").textContent = "Saved the list, but couldn't rename " + errs.join("; ");
+    else location.reload();
+  }).catch(function (x) { $("dmsg").textContent = "Failed: " + x.message; });
+}
+
+// ------------------------------------------------------------------ page
+document.getElementById("app").outerHTML =
+'<main>' +
+  '<section class="hero" id="hero" aria-live="polite"><p class="hero-wait">Loading zmanim</p></section>' +
+  '<section aria-label="Devices"><div id="cards" class="cards"></div></section>' +
+  '<section class="detail" id="detail" hidden>' +
+    '<h2 id="det-name"></h2>' +
+    '<div class="grid">' +
+      '<div class="panel"><h3>Coming up</h3><ul id="up" class="evs"></ul></div>' +
+      '<div class="panel"><h3>Recent switching</h3><ul id="hist" class="evs"></ul></div>' +
+    '</div>' +
+    '<div class="panel"><h3>Schedules</h3><ul id="sl" class="schs"></ul>' +
+      '<div class="form" id="sform"><h4 id="sft">Add a schedule</h4>' +
+        '<label>When<select id="stg" onchange="sform()"><option value="0">At a fixed time</option><option value="1">At candle lighting</option><option value="2">At havdalah</option></select></label>' +
+        '<div id="fx"><label>Time<input type="time" id="stm" value="07:00"></label><div class="days" id="days" role="group" aria-label="Days"></div>' +
+          '<label class="check"><input type="checkbox" id="ssk">Skip on Shabbos and Yom Tov</label></div>' +
+        '<div id="zm" hidden><label>Timing<span class="pair"><select id="sof" onchange="sform()"><option value="0">At the time</option><option value="-1">Minutes before</option><option value="1">Minutes after</option></select>' +
+          '<input type="number" id="smn" min="1" max="180" value="10" aria-label="Minutes"></span></label>' +
+          '<label>Applies to<select id="sfl"></select></label></div>' +
+        '<label>Action<select id="sac"><option value="on">Turn on</option><option value="off">Turn off</option></select></label>' +
+        '<div class="row"><button class="primary" onclick="ssave()">Save schedule</button><button onclick="sreset();msg(\'\')">Clear</button></div>' +
+        '<p class="note" id="smsg" aria-live="polite"></p></div></div>' +
+    '<div class="panel"><h3>Zmanim settings</h3>' +
+      '<p class="hint">When candle lighting and havdalah are for this device. What happens at those times is set in Schedules.</p>' +
+      '<label>Candle lighting, minutes before sunset<input type="number" id="c" min="0" max="60"></label>' +
+      '<label>Havdalah<select id="h"><option value="0">Nightfall (8.5&deg;)</option><option value="42">42 minutes after sunset</option><option value="50">50 minutes after sunset</option><option value="60">60 minutes after sunset</option><option value="72">72 minutes after sunset (Rabbeinu Tam)</option></select></label>' +
+      '<div class="row"><button class="primary" onclick="save()">Save settings</button></div><p class="note" id="cmsg" aria-live="polite"></p></div>' +
+  '</section>' +
+  '<details class="manage"><summary>Manage devices</summary>' +
+    '<p class="hint">The devices shown on this page. Names are each device\'s own name.</p>' +
+    '<ul id="dvl" class="dvl"></ul>' +
+    '<div class="row"><button onclick="dadd()">Add device</button><button class="primary" onclick="dsave()">Save devices</button></div>' +
+    '<p class="note" id="dmsg" aria-live="polite"></p></details>' +
+'</main>';
 (function () {
   var h = ""; for (var i = 0; i < 7; i++) h += '<label id="dl' + i + '"><input type="checkbox" id="d' + i + '" onchange="dsty()">' + DN[i] + "</label>";
-  $("sdy").innerHTML = h;
+  $("days").innerHTML = h;
   sform();
 })();
-function setTitle() { document.title = DEVS[0].name; if (D === DEVS[0]) document.querySelector("h1").textContent = DEVS[0].name; }
-setTitle(); tabs(); go();
-rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; setTitle(); tabs(); }).catch(function () {})
-  .then(sreq)
+
+document.title = "Zmanim";
+cards();
+rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; cards(); }).catch(function () {})
+  .then(function () { return refreshDev(DEVS[0], true); })
   .then(function () { return rpcLocal("KVS.Get", { key: "zmanim_peers" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return window.PEERS || []; }); })
-  .then(function (ips) { $("dvl").innerHTML = '<div class="mu">Loading devices...</div>'; return loadPeers(ips); })
-  .then(dlist);
-setInterval(function () { go(); }, 15000);
+  .then(function (ips) { return loadPeers(ips); })
+  .then(function () { dlist(); });
+// keep status current: one device at a time, every 15 s
+setInterval(function () {
+  DEVS.reduce(function (p, d) { return p.then(function () { return d.dead ? null : refreshDev(d); }); }, Promise.resolve());
+}, 15000);
