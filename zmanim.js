@@ -348,6 +348,13 @@ function rchange(f) { var d = SEL, old = JSON.stringify(d.rj || []); d.rj = d.rj
 function ren(i) { rchange(function (rj) { rj[i][4] = rj[i][4] ? 0 : 1; }).then(function () { msg(""); }); }
 function rdel(i) { if (confirm("Delete this schedule?")) rchange(function (rj) { rj.splice(i, 1); }).then(function () { sreset(); msg("Deleted"); }); }
 
+function hclear() {
+  var d = SEL; if (!d || !confirm("Clear the switching history for " + d.name + "?")) return;
+  evalAt(d.base, d.core, 'history=[];call("KVS.Set",{key:"zmanim_hist",value:"[]"});1')
+    .then(function () { return refreshDev(d); })
+    .catch(function (e) { alert("Couldn't clear: " + e.message); });
+}
+
 // ---- add / edit form
 function sform() {
   var tg = +$("stg").value;
@@ -464,7 +471,7 @@ document.getElementById("app").outerHTML =
       '<button class="det-close" onclick="pick(DEVS.indexOf(SEL))">Close</button></div>' +
     '<div class="grid">' +
       '<div class="panel"><h3>Coming up</h3><ul id="up" class="evs"></ul></div>' +
-      '<div class="panel"><h3>Recent switching</h3><ul id="hist" class="evs"></ul></div>' +
+      '<div class="panel"><div class="ph"><h3>Recent switching</h3><button class="ph-btn" onclick="hclear()">Clear</button></div><ul id="hist" class="evs"></ul></div>' +
     '</div>' +
     '<div class="panel"><h3>Schedules</h3><ul id="sl" class="schs"></ul>' +
       '<div class="form" id="sform"><h4 id="sft">Add a schedule</h4>' +
