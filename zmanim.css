@@ -148,3 +148,4 @@ input[type=number] { width: 84px; }
   .hero-time { font-size: 56px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
