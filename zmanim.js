@@ -439,7 +439,7 @@ function dlist() {
         '<button onclick="ddel(' + i + ')">Remove</button>') + "</li>";
   }).join("");
 }
-function dadd() { DE.push({ ip: "", oip: "", mac: "", name: "", orig: "", self: false }); dlist(); }
+function dadd() { if (DE === null) dlist(); DE.push({ ip: "", oip: "", mac: "", name: "", orig: "", self: false }); dlist(); }
 function ddel(i) { DE.splice(i, 1); dlist(); }
 function dsave() {
   var ips = [], bad = null;
@@ -490,7 +490,7 @@ document.getElementById("app").outerHTML =
       '<label>Havdalah<select id="h"><option value="0">Nightfall (8.5&deg;)</option><option value="42">42 minutes after sunset</option><option value="50">50 minutes after sunset</option><option value="60">60 minutes after sunset</option><option value="72">72 minutes after sunset (Rabbeinu Tam)</option></select></label>' +
       '<div class="row"><button class="primary" onclick="save()">Save settings</button></div><p class="note" id="cmsg" aria-live="polite"></p></div>' +
   '</section>' +
-  '<details class="manage"><summary>Manage devices</summary>' +
+  '<details class="manage" id="manage" ontoggle="if(this.open){DE=null;dlist();}"><summary>Manage devices</summary>' +
     '<p class="hint">The devices shown on this page. Names are each device\'s own name.</p>' +
     '<ul id="dvl" class="dvl"></ul>' +
     '<div class="row"><button onclick="dadd()">Add device</button><button class="primary" onclick="dsave()">Save devices</button></div>' +
@@ -507,8 +507,8 @@ cards();
 rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; cards(); }).catch(function () {})
   .then(function () { return refreshDev(DEVS[0], true); })
   .then(function () { return rpcLocal("KVS.Get", { key: "zmanim_peers" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return window.PEERS || []; }); })
-  .then(function (ips) { return loadPeers(ips); })
-  .then(function () { dlist(); });
+  .then(function (ips) { var p = loadPeers(ips); if (!$("manage").open) { DE = null; dlist(); } return p; })
+  .then(function () { if (!$("manage").open) { DE = null; dlist(); } });
 // keep status current: one device at a time, every 15 s
 setInterval(function () {
   DEVS.reduce(function (p, d) { return p.then(function () { return d.dead ? null : refreshDev(d); }); }, Promise.resolve());
