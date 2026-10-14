@@ -274,6 +274,8 @@ function details() {
   el.hidden = false;
   var d = SEL, s = d.sum;
   $("det-name").textContent = d.name;
+  $("det-bar").classList.toggle("is-on", !!(s && s.relay));
+  $("det-state").textContent = s ? (s.relay ? "On" : "Off") : "";
   var up = upcoming(d);
   $("up").innerHTML = !s ? '<li class="empty">Loading</li>' : up.length ? up.map(function (e) {
     return '<li class="ev' + (e.skip ? " skip" : "") + (e.on === null ? " info" : "") + '">' +
@@ -458,7 +460,8 @@ document.getElementById("app").outerHTML =
   '<section class="hero" id="hero" aria-live="polite"><p class="hero-wait">Loading zmanim</p></section>' +
   '<section aria-label="Devices"><div id="cards" class="cards"></div></section>' +
   '<section class="detail" id="detail" hidden>' +
-    '<h2 id="det-name"></h2>' +
+    '<div class="det-bar" id="det-bar"><span class="lamp"></span><h2 id="det-name"></h2><span class="dev-state" id="det-state"></span>' +
+      '<button class="det-close" onclick="pick(DEVS.indexOf(SEL))">Close</button></div>' +
     '<div class="grid">' +
       '<div class="panel"><h3>Coming up</h3><ul id="up" class="evs"></ul></div>' +
       '<div class="panel"><h3>Recent switching</h3><ul id="hist" class="evs"></ul></div>' +
