@@ -520,24 +520,83 @@ function zsave() {
 }
 
 // ---- add a location: the page writes the new locations.json, you commit it on GitHub, the job makes the times file
+// GitHub token (optional): lets the page commit locations.json itself. Kept only in this browser.
+var TOKKEY = "zmanim-github-token";
+function tokGet() { try { return localStorage.getItem(TOKKEY) || ""; } catch (e) { return ""; } }
+function tokSave() {
+  var v = $("ztok").value.trim();
+  if (!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(v)) { $("ztmsg").textContent = "That doesn't look like a GitHub token (it starts with github_pat_)"; return; }
+  $("ztmsg").textContent = "Checking the token";
+  gh("GET", "", null, v).then(function (r) {
+    if (r.permissions && r.permissions.push === false) throw new Error("this token can't change " + GH);
+    try { localStorage.setItem(TOKKEY, v); } catch (e) { throw new Error("this browser won't store it (private window?)"); }
+    $("ztok").value = ""; tokShow(); $("ztmsg").textContent = "Saved. Add a location and the page commits it for you.";
+  }).catch(function (e) { $("ztmsg").textContent = "Not saved: " + e.message; });
+}
+function tokForget() { try { localStorage.removeItem(TOKKEY); } catch (e) { } tokShow(); $("ztmsg").textContent = "Forgotten in this browser."; }
+function tokShow() {
+  var t = tokGet();
+  $("ztok-set").hidden = !t; $("ztok-new").hidden = !!t;
+  $("zgo").textContent = t ? "Add location" : "Next";
+}
+// GitHub API call for this repo; path "" = the repo itself
+function gh(method, path, body, tok) {
+  tok = tok || tokGet() || $("ztok").value.trim();
+  return fetch("https://api.github.com/repos/" + GH + (path ? "/contents/" + path : ""), {
+    method: method, cache: "no-store",
+    headers: { "Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    body: body ? JSON.stringify(body) : undefined
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (r.ok) return j;
+      if (r.status === 401) throw new Error("GitHub didn't accept the token (wrong, or expired)");
+      if (r.status === 403 || r.status === 404) throw new Error("the token doesn't have access to " + GH + " (needs Contents: Read and write)");
+      if (r.status === 409) throw new Error("locations.json changed at the same moment; press Add location again");
+      throw new Error("GitHub said " + r.status + (j.message ? ": " + j.message : ""));
+    });
+  });
+}
+function b64dec(s) { return decodeURIComponent(escape(atob(String(s).replace(/\s/g, "")))); }
+function b64enc(s) { return btoa(unescape(encodeURIComponent(s))); }
+function locText(list) {
+  return "[\n" + list.map(function (x) { return "  " + JSON.stringify(x).replace(/,"/g, ', "').replace(/":/g, '": ').replace(/^\{/, "{ ").replace(/\}$/, " }"); }).join(",\n") + "\n]\n";
+}
+
 function zprep() {
-  var nm = $("zn").value.trim(), co = $("zco").value.trim().match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/), m = $("zamsg");
+  var nm = $("zn").value.trim(), co = $("zco").value.trim().match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/), m = $("zamsg"), tok = tokGet();
   if (!nm || nm.length > 40) { m.textContent = "Enter a name (up to 40 characters)"; return; }
   if (!co) { m.textContent = "Enter the coordinates as latitude, longitude, e.g. 51.5484, 0.1716"; return; }
   var lat = +co[1], lon = +co[2];
   if (lat < -90 || lat > 90 || lon < -180 || lon > 180) { m.textContent = "Latitude must be -90 to 90 and longitude -180 to 180"; return; }
+  function entry(list) {
+    var base = nm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "site", id = base, n = 2;
+    while (list.some(function (x) { return x.id === id; })) id = base + "-" + n++;
+    return { id: id, lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5, tz: TZ || "Europe/London", name: nm };
+  }
+  function pending(L) { NEWLOC = L; zlocs(); $("zl").value = L.id; zchanged(); zwatch(L.id); }
   m.textContent = "Getting the current list from GitHub";
+  if (tok) {                                     // automatic: commit locations.json through the GitHub API
+    var sha;
+    gh("GET", "locations.json").then(function (f) {
+      sha = f.sha;
+      var list = JSON.parse(b64dec(f.content)), L = entry(list);
+      LOCS = list;
+      m.textContent = "Adding " + nm + " to locations.json on GitHub";
+      return gh("PUT", "locations.json", { message: "Add location " + nm, content: b64enc(locText(list.concat([L]))), sha: sha }).then(function () { return L; });
+    }).then(function (L) {
+      $("zsteps").hidden = true; m.textContent = "Added to GitHub.";
+      pending(L);
+    }).catch(function (e) { m.textContent = "Couldn't add it: " + e.message; });
+    return;
+  }
   fetch(RAW + "locations.json?t=" + Date.now(), { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(function (list) {
       LOCS = list;
-      var base = nm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "site", id = base, n = 2;
-      while (list.some(function (x) { return x.id === id; })) id = base + "-" + n++;
-      NEWLOC = { id: id, lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5, tz: TZ || "Europe/London", name: nm };
-      $("zjson").value = "[\n" + list.concat([NEWLOC]).map(function (x) { return "  " + JSON.stringify(x).replace(/,"/g, ', "').replace(/":/g, '": ').replace(/^\{/, "{ ").replace(/\}$/, " }"); }).join(",\n") + "\n]\n";
+      var L = entry(list);
+      $("zjson").value = locText(list.concat([L]));
       $("zgh").href = "https://github.com/" + GH + "/edit/main/locations.json";
       $("zsteps").hidden = false; m.textContent = "";
-      zlocs(); $("zl").value = id; zchanged();
-      zwatch(id);
+      pending(L);
     })
     .catch(function (e) { m.textContent = "Couldn't get locations.json from GitHub (" + e.message + ")"; });
 }
@@ -553,7 +612,7 @@ function zcopy() {
 function zwatch(id) {                            // wait for GitHub to make times/<id>.csv
   if (ZPOLL) clearInterval(ZPOLL);
   var tries = 0, el = $("zpoll");
-  el.textContent = "Waiting for the times file. Once you've committed on GitHub it usually takes about a minute.";
+  el.textContent = tokGet() ? "Waiting for GitHub to make the times file. This usually takes about a minute." : "Waiting for the times file. Once you've committed on GitHub it usually takes about a minute.";
   ZPOLL = setInterval(function () {
     if (++tries > 60) { clearInterval(ZPOLL); ZPOLL = null; el.textContent = "Still no times file after 20 minutes. Check the Actions tab on GitHub for a failed run."; return; }
     fetch(RAW + "times/" + id + ".csv?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; })
@@ -748,12 +807,18 @@ document.getElementById("app").outerHTML =
       '<p class="hint">In Google Maps, right-click the spot (on a phone, press and hold). The numbers that appear are the coordinates; click them to copy.</p>' +
       '<label>Name<input id="zn" maxlength="40" placeholder="Site office"></label>' +
       '<label>Coordinates<input id="zco" placeholder="51.5484, 0.1716" inputmode="decimal"></label>' +
-      '<div class="row"><button onclick="zprep()">Next</button></div><p class="note" id="zamsg" aria-live="polite"></p>' +
+      '<div class="row"><button class="primary" id="zgo" onclick="zprep()">Next</button></div><p class="note" id="zamsg" aria-live="polite"></p>' +
       '<div id="zsteps" hidden><ol class="steps">' +
         '<li>Copy the updated list of locations.<textarea id="zjson" rows="4" readonly aria-label="Updated locations.json"></textarea><div class="row"><button onclick="zcopy()">Copy</button></div></li>' +
         '<li><a id="zgh" target="_blank" rel="noopener">Open locations.json on GitHub</a>, select everything in it, paste, and press <b>Commit changes</b>.</li>' +
         '<li>Come back here. GitHub makes the times file in about a minute; this page checks, then selects the new location. Press <b>Save for all devices</b>.</li>' +
-      '</ol><p class="note" id="zpoll" aria-live="polite"></p></div>' +
+      '</ol></div><p class="note" id="zpoll" aria-live="polite"></p>' +
+      '<div class="tok"><h4>Add locations automatically</h4>' +
+        '<div id="ztok-new"><p class="hint">With a GitHub token this page commits the new location itself; without one you paste it on GitHub by hand. The token is kept only in this browser.</p>' +
+          '<label>GitHub token<input type="password" id="ztok" autocomplete="off" spellcheck="false" placeholder="github_pat_..."></label>' +
+          '<div class="row"><button onclick="tokSave()">Save token</button></div></div>' +
+        '<div id="ztok-set" hidden><p class="hint">This browser has a GitHub token, so new locations are committed automatically.</p><div class="row"><button onclick="tokForget()">Forget token</button></div></div>' +
+        '<p class="note" id="ztmsg" aria-live="polite"></p></div>' +
     '</details>' +
   '</details>' +
   '<details class="manage fold" id="zweek" ontoggle="if(this.open)wk(0)"><summary>Check a week</summary>' +
@@ -777,7 +842,7 @@ document.title = "Zmanim";
 cards();
 setTZ((function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return null; } })());   // until the device says
 rpcLocal("Sys.GetConfig").then(function (c) { if (c && c.location && c.location.tz) { setTZ(c.location.tz); DEVS.forEach(function (d) { if (d.sum) render(d); }); } }).catch(function () {});
-zlocs(); loadLocs();
+zlocs(); loadLocs(); tokShow();
 rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; cards(); }).catch(function () {})
   .then(function () { return refreshDev(DEVS[0], true); })
   .then(function () { return rpcLocal("KVS.Get", { key: "zmanim_peers" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return window.PEERS || []; }); })
