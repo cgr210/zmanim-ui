@@ -10,10 +10,24 @@ var FL = ["Every time", "Shabbos only", "Yom Tov only", "First night only"];
 function $(i) { return document.getElementById(i); }
 function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 function p2(x) { return (x < 10 ? "0" : "") + x; }
-function local(t, off) { return new Date((t + off) * 1000); }        // read with getUTC* = device local time
+// Local time: the device's time zone (Europe/London etc.), so times either side of a clock change are right.
+// Falls back to the device's current UTC offset if the browser can't do time zones.
+var TZ = null, TZF = {}, OFFC = {};
+function tzOff(t, tz) {                        // seconds east of UTC in time zone tz at unix time t
+  var k = tz + Math.floor(t / 900); if (k in OFFC) return OFFC[k];
+  if (!TZF[tz]) TZF[tz] = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+  var p = {}; TZF[tz].formatToParts(new Date(t * 1000)).forEach(function (x) { p[x.type] = +x.value; });
+  return (OFFC[k] = Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) / 1000 - t);
+}
+function offAt(t) { if (!TZ) return null; try { return tzOff(t, TZ); } catch (e) { TZ = null; return null; } }
+function setTZ(z) { if (!z) return; try { tzOff(0, z); TZ = z; } catch (e) { } }
+function O(t, off) { var o = offAt(t); return o === null ? (off || 0) : o; }
+function wall(w, off) { var t = w - O(w, off); return w - O(t, off); }   // local wall-clock seconds -> unix
+function local(t, off) { return new Date((t + O(t, off)) * 1000); }   // read with getUTC* = local time
 function hm(t, off) { var d = local(t, off); return p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()); }
+function dmy(t, off) { var d = local(t, off); return DN[d.getUTCDay()] + " " + p2(d.getUTCDate()) + "/" + p2(d.getUTCMonth() + 1); }
 function dayLabel(t, ref, off) {                                     // "Today", "Tomorrow", "Friday", "Fri 23/10"
-  var a = Math.floor((t + off) / 86400), b = Math.floor((ref + off) / 86400), d = local(t, off);
+  var a = Math.floor((t + O(t, off)) / 86400), b = Math.floor((ref + O(ref, off)) / 86400), d = local(t, off);
   if (a === b) return "Today";
   if (a === b + 1) return "Tomorrow";
   if (a - b < 7) return DL[d.getUTCDay()];
@@ -186,10 +200,10 @@ function upcoming(d) {
   if (st !== null) win.push([st, Infinity]);
   (d.sj || []).forEach(function (j) {
     if (!j.t || j.a === null || !(j.en || paused.indexOf(j.id) >= 0)) return;
-    var sec = +j.t.slice(0, 2) * 3600 + +j.t.slice(3) * 60, day0 = Math.floor((s.ts + s.off) / 86400);
+    var sec = +j.t.slice(0, 2) * 3600 + +j.t.slice(3) * 60, day0 = Math.floor((s.ts + O(s.ts, s.off)) / 86400);
     for (var k = 0; k <= 7; k++) {
       var day = day0 + k; if (j.d.indexOf((day + 4) % 7) < 0) continue;
-      var t = day * 86400 + sec - s.off; if (t <= s.ts || t > end) continue;
+      var t = wall(day * 86400 + sec, s.off); if (t <= s.ts || t > end) continue;
       var skip = (d.sk || []).indexOf(j.id) >= 0 && win.some(function (w) { return t >= w[0] && t < w[1]; });
       list.push({ t: t, on: j.a, why: skip ? "Schedule, skipped for Shabbos/Yom Tov" : "Schedule", kind: 0, skip: skip });
     }
@@ -210,7 +224,7 @@ function statusNote(s) {
 }
 
 // ------------------------------------------------------------------ rendering
-function render(d) { hero(); cards(); if (d === SEL) details(); }
+function render(d) { hero(); cards(); if (d === SEL) details(); zshow(); }
 
 // the next candle lighting / havdalah, from this device's times
 function hero() {
@@ -260,14 +274,14 @@ function pick(i) {
   var d = DEVS[i];
   if (d.core === undefined) return;
   SEL = SEL === d ? null : d;
-  ED = null; FILLED = false; msg(""); $("cmsg").textContent = "";
+  ED = null; msg("");
   if (SEL) sreset();
   cards(); details();
   if (SEL) { $("detail").scrollIntoView({ behavior: "smooth", block: "start" }); refreshDev(d, true); }
 }
 
 // ------------------------------------------------------------------ details of the selected device
-var ED = null, FILLED = false;
+var ED = null;
 function details() {
   var el = $("detail");
   if (!SEL) { el.hidden = true; return; }
@@ -284,11 +298,10 @@ function details() {
       '<span class="ev-why">' + esc(e.why) + "</span></li>";
   }).join("") : '<li class="empty">Nothing in the next 7 days</li>';
   $("hist").innerHTML = !s ? "" : s.hist.length ? s.hist.map(function (e) {
-    var p = String(e[0]).split(" ");           // "Fri 09/10 18:25"
-    return '<li class="ev"><span class="ev-when">' + esc(p[0] + " " + (p[1] || "")) + "<b>" + esc(p[2] || "") + '</b></span><span class="ev-act ' + (e[1] ? "on" : "off") + '">' + (e[1] ? "On" : "Off") + '</span><span class="ev-why">' + esc(e[2]) + "</span></li>";
+    var p = typeof e[3] === "number" ? [dmy(e[3], s.off), hm(e[3], s.off)] : String(e[0]).split(/ (?=\d\d:)/);   // v8.2 sends "Fri 09/10 18:25" only
+    return '<li class="ev"><span class="ev-when">' + esc(p[0]) + "<b>" + esc(p[1] || "") + '</b></span><span class="ev-act ' + (e[1] ? "on" : "off") + '">' + (e[1] ? "On" : "Off") + '</span><span class="ev-why">' + esc(e[2]) + "</span></li>";
   }).join("") : '<li class="empty">No switching recorded yet</li>';
   slist();
-  if (s && !FILLED && s.cfg) { $("c").value = s.cfg.c; $("h").value = s.cfg.h; FILLED = true; }
 }
 
 // ---- schedules
@@ -415,15 +428,254 @@ function ssave() {
   after(rpcAt(d.base, eid === null ? "Schedule.Create" : "Schedule.Update", p).then(function (c) { return skset(d, eid === null ? c.id : eid, sk); })).then(done);
 }
 
-// ---- zmanim settings (per device)
-function save() {
-  var d = SEL;
-  $("cmsg").textContent = "Saving";
-  core(d, "set=1&c=" + $("c").value + "&h=" + $("h").value + "&il=0&ps=1").then(function (s) {
-    $("cmsg").textContent = /^Saved/.test(s.msg || "Saved") ? "Saved. Times are being recalculated." : s.msg;
-    setTimeout(function () { refreshDev(d); }, 2500);
-  }).catch(function (e) { $("cmsg").textContent = "Failed: " + e.message; });
+// ------------------------------------------------------------------ zmanim settings (the same on every device)
+// Each Shelly keeps its own copy (it must run without this page); Save writes the same values to all of them.
+var GH = (function () {                         // "user/repo" this page was loaded from
+  var src = (document.currentScript && document.currentScript.src) || "", m = /^https:\/\/([^.\/]+)\.github\.io\/([^\/?#]+)\//.exec(src);
+  return m ? m[1] + "/" + m[2] : "cgr210/zmanim-ui";
+})();
+var RAW = "https://raw.githubusercontent.com/" + GH + "/main/";
+var HAV = { 0: "at nightfall (8.5°)", 42: "42 min after sunset", 50: "50 min after sunset", 60: "60 min after sunset", 72: "72 min after sunset" };
+var LOCS = [], NEWLOC = null, ZFILLED = false, ZDIRTY = false, ZPOLL = null;
+
+function cfgOf(d) { var c = d.sum && d.sum.cfg; return c ? { c: c.c, h: c.h, l: c.l || "london", old: c.l === undefined } : null; }
+function locById(id) {
+  if (NEWLOC && NEWLOC.id === id) return NEWLOC;
+  for (var i = 0; i < LOCS.length; i++) if (LOCS[i].id === id) return LOCS[i];
+  return null;
 }
+function locName(id) { var L = locById(id); return L ? (L.name || L.id) : id; }
+function zloc() {                               // the location chosen in the form
+  return locById($("zl").value) || LOCS[0] || { id: "london", name: "London", lat: 51.50853, lon: -0.12574, tz: "Europe/London" };
+}
+function loadLocs() {
+  return fetch(RAW + "locations.json?t=" + Date.now(), { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (a) {
+      LOCS = a;
+      if (NEWLOC && LOCS.some(function (x) { return x.id === NEWLOC.id; })) NEWLOC = null;
+      zlocs(); $("zlmsg").textContent = ""; zshow();
+    })
+    .catch(function (e) { $("zlmsg").textContent = "Couldn't load the list of locations from GitHub (" + e.message + ")"; });
+}
+function zlocs() {                              // fill the Location list, keeping the current choice
+  var cur = $("zl").value || ((DEVS[0] && cfgOf(DEVS[0])) || {}).l || "london", list = LOCS.slice();
+  if (NEWLOC) list.push(NEWLOC);
+  if (!locById(cur)) list.push({ id: cur, name: cur + " (not in locations.json)" });
+  $("zl").innerHTML = list.map(function (L) {
+    var where = L.lat !== undefined ? " (" + (+L.lat).toFixed(4) + ", " + (+L.lon).toFixed(4) + ")" : "";
+    return '<option value="' + esc(L.id) + '">' + esc((L.name || L.id) + where + (L === NEWLOC ? ", not on GitHub yet" : "")) + "</option>";
+  }).join("");
+  $("zl").value = cur;
+}
+function zfill(c) { $("zc").value = c.c; $("zh").value = c.h; if (locById(c.l)) $("zl").value = c.l; else { zlocs(); $("zl").value = c.l; } }
+function zchanged() { ZDIRTY = true; $("zmsg").textContent = ""; if ($("zweek").open) wk(0); }
+
+// summary line + warnings; called whenever a device's status comes in
+function zshow() {
+  var c0 = DEVS[0] && cfgOf(DEVS[0]);
+  if (!c0) return;
+  if (!ZFILLED && !ZDIRTY) { zfill(c0); ZFILLED = true; }
+  $("zsum").textContent = locName(c0.l) + ", candles " + c0.c + " min before sunset, havdalah " + (HAV[c0.h] || c0.h + " min after sunset");
+  var diff = [], old = [];
+  DEVS.forEach(function (d) {
+    var c = cfgOf(d); if (!c || d.dead) return;
+    if (c.c !== c0.c || c.h !== c0.h || c.l !== c0.l) diff.push(d.name + " (" + locName(c.l) + ", " + c.c + " min, havdalah " + (HAV[c.h] || c.h + " min") + ")");
+    if (c.old) old.push(d.name);
+  });
+  var w = [];
+  if (diff.length) w.push("Not the same on every device: " + diff.join("; ") + ". Save to make them match.");
+  if (old.length) w.push(old.join(", ") + (old.length > 1 ? " have" : " has") + " the older script (v8.2), which can only use London. Update it to v8.3 to use another location.");
+  $("zwarn").textContent = w.join(" ");
+  $("zwarn").hidden = !w.length;
+}
+
+function zsave() {
+  var c = Math.round(+$("zc").value), h = +$("zh").value, L = zloc(), m = $("zmsg");
+  if (!($("zc").value !== "" && c >= 0 && c <= 60)) { m.textContent = "Candle lighting must be 0 to 60 minutes"; return; }
+  if (L === NEWLOC) { m.textContent = "Finish adding " + L.name + " on GitHub first (steps under Add a location)."; return; }
+  m.textContent = "Checking the times file for " + (L.name || L.id);
+  fetch(RAW + "times/" + L.id + ".csv?t=" + Date.now(), { cache: "no-store" })
+    .then(function (r) { return r.ok ? r.text() : ""; }, function () { return null; })
+    .then(function (b) {
+      if (b === "" || (b && b.indexOf("#zmanim v1") !== 0)) throw new Error("There's no times file for " + (L.name || L.id) + " on GitHub yet. If you've just added it, wait a minute and try again.");
+      var devs = DEVS.filter(function (d) { return d.core !== undefined && !d.dead; }), errs = [], ok = 0;
+      m.textContent = "Saving";
+      return devs.reduce(function (p, d) {
+        return p.then(function () {
+          var cf = cfgOf(d);
+          if (cf && cf.old && L.id !== "london") { errs.push(d.name + ": needs script v8.3 for another location"); return; }
+          return core(d, "set=1&c=" + c + "&h=" + h + "&il=0&ps=1" + (cf && cf.old ? "" : "&l=" + encodeURIComponent(L.id)))
+            .then(function (s) { if (s.msg && !/^Saved/.test(s.msg)) errs.push(d.name + ": " + s.msg); else ok++; d.sum = s; },
+                  function (e) { errs.push(d.name + ": " + e.message); });
+        });
+      }, Promise.resolve()).then(function () {
+        ZDIRTY = false;
+        m.textContent = (ok ? "Saved on " + ok + (ok === 1 ? " device" : " devices") + ". Times are being recalculated." : "") + (errs.length ? " Not saved on " + errs.join("; ") : "");
+        zshow(); render(DEVS[0]);
+        setTimeout(function () { DEVS.reduce(function (p, d) { return p.then(function () { return d.dead ? null : refreshDev(d); }); }, Promise.resolve()); }, 3000);
+      });
+    })
+    .catch(function (e) { m.textContent = e.message; });
+}
+
+// ---- add a location: the page writes the new locations.json, you commit it on GitHub, the job makes the times file
+function zprep() {
+  var nm = $("zn").value.trim(), co = $("zco").value.trim().match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/), m = $("zamsg");
+  if (!nm || nm.length > 40) { m.textContent = "Enter a name (up to 40 characters)"; return; }
+  if (!co) { m.textContent = "Enter the coordinates as latitude, longitude, e.g. 51.5484, 0.1716"; return; }
+  var lat = +co[1], lon = +co[2];
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) { m.textContent = "Latitude must be -90 to 90 and longitude -180 to 180"; return; }
+  m.textContent = "Getting the current list from GitHub";
+  fetch(RAW + "locations.json?t=" + Date.now(), { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (list) {
+      LOCS = list;
+      var base = nm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "site", id = base, n = 2;
+      while (list.some(function (x) { return x.id === id; })) id = base + "-" + n++;
+      NEWLOC = { id: id, lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5, tz: TZ || "Europe/London", name: nm };
+      $("zjson").value = "[\n" + list.concat([NEWLOC]).map(function (x) { return "  " + JSON.stringify(x).replace(/,"/g, ', "').replace(/":/g, '": ').replace(/^\{/, "{ ").replace(/\}$/, " }"); }).join(",\n") + "\n]\n";
+      $("zgh").href = "https://github.com/" + GH + "/edit/main/locations.json";
+      $("zsteps").hidden = false; m.textContent = "";
+      zlocs(); $("zl").value = id; zchanged();
+      zwatch(id);
+    })
+    .catch(function (e) { m.textContent = "Couldn't get locations.json from GitHub (" + e.message + ")"; });
+}
+function zcopy() {
+  var ta = $("zjson"), done = function () { $("zpoll").textContent = "Copied. Now open locations.json on GitHub (step 2)."; };
+  function byHand() {
+    ta.focus(); ta.select();
+    try { if (document.execCommand("copy")) { done(); return; } } catch (e) { }
+    $("zpoll").textContent = "Select the text above and copy it (Ctrl+C, or press and hold on a phone).";
+  }
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(ta.value).then(done, byHand); else byHand();
+}
+function zwatch(id) {                            // wait for GitHub to make times/<id>.csv
+  if (ZPOLL) clearInterval(ZPOLL);
+  var tries = 0, el = $("zpoll");
+  el.textContent = "Waiting for the times file. Once you've committed on GitHub it usually takes about a minute.";
+  ZPOLL = setInterval(function () {
+    if (++tries > 60) { clearInterval(ZPOLL); ZPOLL = null; el.textContent = "Still no times file after 20 minutes. Check the Actions tab on GitHub for a failed run."; return; }
+    fetch(RAW + "times/" + id + ".csv?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; })
+      .then(function (b) {
+        if (b.indexOf("#zmanim v1") !== 0) return;
+        clearInterval(ZPOLL); ZPOLL = null;
+        return loadLocs().then(function () {
+          $("zl").value = id; zchanged();
+          el.textContent = "Ready. " + locName(id) + " is selected: press Save for all devices to use it.";
+        });
+      }).catch(function () { });
+  }, 20000);
+}
+
+// ------------------------------------------------------------------ check a week (worked out in this browser with Hebcal's library)
+var HC = null;
+function hebcalLib() {
+  if (window.hebcal) return Promise.resolve(window.hebcal);
+  if (HC) return HC;
+  HC = new Promise(function (ok, no) {
+    var sc = document.createElement("script");
+    sc.src = "https://cdn.jsdelivr.net/npm/@hebcal/core@6.14.1/dist/bundle.min.js";   // same version as the GitHub job
+    sc.onload = function () { if (window.hebcal) ok(window.hebcal); else { HC = null; no(new Error("the Hebcal library didn't load")); } };
+    sc.onerror = function () { HC = null; no(new Error("couldn't load the Hebcal library (needs internet)")); };
+    document.head.appendChild(sc);
+  });
+  return HC;
+}
+function ymdL(g) { return g.getFullYear() + "-" + p2(g.getMonth() + 1) + "-" + p2(g.getDate()); }
+// the same rows the GitHub job writes (see tools/make-times.mjs), for dates start..end
+function zrows(hc, L, start, end) {
+  var loc = new hc.Location(L.lat, L.lon, false, L.tz, L.name || L.id, "XX");
+  var evs = hc.HebrewCalendar.calendar({ start: start, end: end, location: loc, il: false, candlelighting: true,
+    candleLightingMins: 18, havdalahDeg: 8.5, noMinorFast: true, noModern: true, noRoshChodesh: true, noSpecialShabbat: true });
+  var yt = {}, name = {}, rows = [];
+  evs.forEach(function (e) {
+    var ds = e.getDesc();
+    if (ds === "Candle lighting" || ds === "Havdalah" || !(e.getFlags() & hc.flags.CHAG)) return;
+    var d = ymdL(e.getDate().greg()); yt[d] = 1; name[d] = e.render("en");
+  });
+  evs.forEach(function (e) {
+    var ds = e.getDesc(); if (ds !== "Candle lighting" && ds !== "Havdalah") return;
+    var g = e.getDate().greg(), d = ymdL(g), z = new hc.Zmanim(loc, g, false);
+    var sunset = Math.round(hc.Zmanim.roundTime(z.sunset()).getTime() / 1000), tzeit = Math.round(hc.Zmanim.roundTime(z.tzeit(8.5)).getTime() / 1000);
+    var nx = new Date(g.getFullYear(), g.getMonth(), g.getDate() + 1), nd = ymdL(nx), wd = g.getDay();
+    if (ds === "Candle lighting") {
+      var mode = e.eventTime.getTime() > z.sunset().getTime() ? 1 : 0, shab = nx.getDay() === 6;
+      rows.push({ date: d, type: 1, sunset: sunset, tzeit: tzeit, mode: mode, shab: shab, yt: !!yt[nd], first: mode === 0 && wd !== 6 && !yt[d], memo: name[nd] || (shab ? "Shabbat" : "") });
+    } else rows.push({ date: d, type: 2, sunset: sunset, tzeit: tzeit, mode: 1, shab: wd === 6, yt: !!yt[d], first: false, memo: name[d] || (wd === 6 ? "Shabbat" : "") });
+  });
+  return rows;
+}
+function hmIn(t, tz) { var d = new Date((t + tzOff(t, tz)) * 1000); return p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()); }
+function wallIn(w, tz) { var t = w - tzOff(w, tz); return w - tzOff(t, tz); }
+
+function wkToday() { var L = zloc(), t = Math.floor(Date.now() / 1000), d = new Date((t + tzOff(t, L.tz)) * 1000); $("zwd").value = d.toISOString().slice(0, 10); wk(0); }
+function wk(n) {
+  var out = $("zwk"), L = zloc();
+  if (!$("zwd").value) { var t0 = Math.floor(Date.now() / 1000); $("zwd").value = new Date((t0 + tzOff(t0, L.tz)) * 1000).toISOString().slice(0, 10); }
+  var p = $("zwd").value.split("-"), sel = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n));
+  $("zwd").value = sel.toISOString().slice(0, 10);
+  var sun = Date.UTC(sel.getUTCFullYear(), sel.getUTCMonth(), sel.getUTCDate() - sel.getUTCDay()) / 1000;   // Sunday 00:00 as "wall" seconds
+  var c = Math.round(+$("zc").value) || 0, h = +$("zh").value;
+  out.innerHTML = '<p class="empty">Working it out</p>';
+  hebcalLib().then(function (hc) {
+    var s0 = new Date(sun * 1000);
+    var rows = zrows(hc, L, new Date(s0.getUTCFullYear(), s0.getUTCMonth(), s0.getUTCDate() - 7), new Date(s0.getUTCFullYear(), s0.getUTCMonth(), s0.getUTCDate() + 8));
+    // the zmanim, as the Shellys work them out from the times file and these settings
+    var z = rows.map(function (r) {
+      return { r: r, kind: r.type, t: (r.type === 1 && r.mode === 0) ? r.sunset - c * 60 : (h > 0 ? r.sunset + h * 60 : r.tzeit) };
+    }).sort(function (a, b) { return a.t - b.t; });
+    var win = [], st = null;                       // Shabbos / Yom Tov: from candle lighting to havdalah
+    z.forEach(function (e) { if (e.kind === 1 && st === null) st = e.t; else if (e.kind === 2 && st !== null) { win.push([st, e.t]); st = null; } });
+    if (st !== null) win.push([st, Infinity]);
+    var a = wallIn(sun, L.tz), b = wallIn(sun + 7 * 86400, L.tz), items = [];
+    z.forEach(function (e) {
+      if (e.t < a || e.t >= b) return;
+      var r = e.r, nm = e.kind === 1 ? "Candle lighting" : "Havdalah";
+      var how = e.kind === 1 && r.mode === 1 ? "at nightfall, from an existing flame" : e.kind === 1 ? c + " min before sunset (" + hmIn(r.sunset, L.tz) + ")" : (h > 0 ? h + " min after sunset (" + hmIn(r.sunset, L.tz) + ")" : "nightfall, 8.5°");
+      items.push({ t: e.t, info: true, why: nm + (r.memo ? ", " + r.memo : "") + ": " + how });
+      DEVS.forEach(function (d) {
+        if (d.core === undefined || d.dead) return;
+        (d.rj || []).forEach(function (q) {
+          if (q[0] !== e.kind || !q[4]) return;
+          if ((q[3] === 1 && !r.shab) || (q[3] === 2 && !r.yt) || (q[3] === 3 && !r.first)) return;
+          items.push({ t: e.t + q[1] * 60, on: !!q[2], why: d.name + ": " + rtxt(q) + (q[3] ? ", " + FL[q[3]] : "") });
+        });
+      });
+    });
+    // fixed-time schedules that fall on Shabbos / Yom Tov
+    DEVS.forEach(function (d) {
+      if (d.core === undefined || d.dead) return;
+      var paused = (d.sum && d.sum.paused) || [];
+      (d.sj || []).forEach(function (j) {
+        if (!j.fx || j.a === null || !(j.en || paused.indexOf(j.id) >= 0)) return;
+        var sec = +j.t.slice(0, 2) * 3600 + +j.t.slice(3) * 60;
+        for (var k = 0; k < 7; k++) {
+          if (j.d.indexOf(k) < 0) continue;
+          var t = wallIn(sun + k * 86400 + sec, L.tz);
+          if (!win.some(function (w) { return t >= w[0] && t < w[1]; })) continue;
+          var skip = (d.sk || []).indexOf(j.id) >= 0;
+          items.push({ t: t, on: j.a, skip: skip, warn: !skip, why: d.name + ": " + j.t + " schedule" + (skip ? ", skipped for Shabbos/Yom Tov" : ", runs on Shabbos/Yom Tov (not set to skip)") });
+        }
+      });
+    });
+    items.sort(function (x, y) { return x.t - y.t || (y.info ? 1 : 0) - (x.info ? 1 : 0); });
+    var html = '<p class="wk-head">' + esc(dayTitle(sun) + " to " + dayTitle(sun + 6 * 86400)) + ", " + esc(L.name || L.id) + "</p>", day = null;
+    if (!items.length) html += '<p class="empty">No candle lighting or havdalah this week</p>';
+    items.forEach(function (e) {
+      var dd = Math.floor((e.t + tzOff(e.t, L.tz)) / 86400);
+      if (dd !== day) { if (day !== null) html += "</ul>"; day = dd; html += '<h4 class="wk-day">' + esc(dayTitle(dd * 86400)) + '</h4><ul class="evs">'; }
+      html += '<li class="ev' + (e.info ? " info" : "") + (e.skip ? " skip" : "") + (e.warn ? " warn" : "") + '">' +
+        '<span class="ev-when"><b>' + hmIn(e.t, L.tz) + "</b></span>" +
+        '<span class="ev-act ' + (e.info ? "" : e.on ? "on" : "off") + '">' + (e.info ? "" : e.on ? "On" : "Off") + "</span>" +
+        '<span class="ev-why">' + esc(e.why) + "</span></li>";
+    });
+    if (day !== null) html += "</ul>";
+    html += '<p class="hint">Fixed-time schedules are listed only when they fall on Shabbos or Yom Tov.</p>';
+    out.innerHTML = html;
+  }).catch(function (e) { out.innerHTML = '<p class="empty">' + esc(e.message) + "</p>"; });
+}
+function dayTitle(w) { var d = new Date(w * 1000); return DL[d.getUTCDay()] + " " + d.getUTCDate() + " " + ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][d.getUTCMonth()]; }
 
 // ------------------------------------------------------------------ device list editor
 var DE = null;
@@ -484,12 +736,31 @@ document.getElementById("app").outerHTML =
         '<label>Action<select id="sac"><option value="on">Turn on</option><option value="off">Turn off</option></select></label>' +
         '<div class="row"><button class="primary" onclick="ssave()">Save schedule</button><button onclick="sreset();msg(\'\')">Clear</button></div>' +
         '<p class="note" id="smsg" aria-live="polite"></p></div></div>' +
-    '<div class="panel"><h3>Zmanim settings</h3>' +
-      '<p class="hint">When candle lighting and havdalah are for this device. What happens at those times is set in Schedules.</p>' +
-      '<label>Candle lighting, minutes before sunset<input type="number" id="c" min="0" max="60"></label>' +
-      '<label>Havdalah<select id="h"><option value="0">Nightfall (8.5&deg;)</option><option value="42">42 minutes after sunset</option><option value="50">50 minutes after sunset</option><option value="60">60 minutes after sunset</option><option value="72">72 minutes after sunset (Rabbeinu Tam)</option></select></label>' +
-      '<div class="row"><button class="primary" onclick="save()">Save settings</button></div><p class="note" id="cmsg" aria-live="polite"></p></div>' +
   '</section>' +
+  '<details class="manage fold" id="zset"><summary>Zmanim settings <span class="sum-note" id="zsum"></span></summary>' +
+    '<p class="hint">For all devices. What each device does at candle lighting and havdalah is set in its own Schedules.</p>' +
+    '<label>Location<select id="zl" onchange="zchanged()"></select></label><p class="note" id="zlmsg"></p>' +
+    '<label>Candle lighting, minutes before sunset<input type="number" id="zc" min="0" max="60" oninput="zchanged()"></label>' +
+    '<label>Havdalah<select id="zh" onchange="zchanged()"><option value="0">Nightfall (8.5&deg;)</option><option value="42">42 minutes after sunset</option><option value="50">50 minutes after sunset</option><option value="60">60 minutes after sunset</option><option value="72">72 minutes after sunset (Rabbeinu Tam)</option></select></label>' +
+    '<p class="warn" id="zwarn" hidden></p>' +
+    '<div class="row"><button class="primary" onclick="zsave()">Save for all devices</button></div><p class="note" id="zmsg" aria-live="polite"></p>' +
+    '<details class="sub" id="zadd"><summary>Add a location</summary>' +
+      '<p class="hint">In Google Maps, right-click the spot (on a phone, press and hold). The numbers that appear are the coordinates; click them to copy.</p>' +
+      '<label>Name<input id="zn" maxlength="40" placeholder="Site office"></label>' +
+      '<label>Coordinates<input id="zco" placeholder="51.5484, 0.1716" inputmode="decimal"></label>' +
+      '<div class="row"><button onclick="zprep()">Next</button></div><p class="note" id="zamsg" aria-live="polite"></p>' +
+      '<div id="zsteps" hidden><ol class="steps">' +
+        '<li>Copy the updated list of locations.<textarea id="zjson" rows="4" readonly aria-label="Updated locations.json"></textarea><div class="row"><button onclick="zcopy()">Copy</button></div></li>' +
+        '<li><a id="zgh" target="_blank" rel="noopener">Open locations.json on GitHub</a>, select everything in it, paste, and press <b>Commit changes</b>.</li>' +
+        '<li>Come back here. GitHub makes the times file in about a minute; this page checks, then selects the new location. Press <b>Save for all devices</b>.</li>' +
+      '</ol><p class="note" id="zpoll" aria-live="polite"></p></div>' +
+    '</details>' +
+  '</details>' +
+  '<details class="manage fold" id="zweek" ontoggle="if(this.open)wk(0)"><summary>Check a week</summary>' +
+    '<p class="hint">The zmanim for any week with the settings above, saved or not, and what each device will do.</p>' +
+    '<div class="wk-bar"><button onclick="wk(-7)">&minus; week</button><input type="date" id="zwd" onchange="wk(0)" aria-label="Date in the week"><button onclick="wk(7)">+ week</button><button onclick="wkToday()">This week</button></div>' +
+    '<div id="zwk" aria-live="polite"></div>' +
+  '</details>' +
   '<details class="manage" id="manage" ontoggle="if(this.open){DE=null;dlist();}"><summary>Manage devices</summary>' +
     '<p class="hint">The devices shown on this page. Names are each device\'s own name.</p>' +
     '<ul id="dvl" class="dvl"></ul>' +
@@ -504,6 +775,9 @@ document.getElementById("app").outerHTML =
 
 document.title = "Zmanim";
 cards();
+setTZ((function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return null; } })());   // until the device says
+rpcLocal("Sys.GetConfig").then(function (c) { if (c && c.location && c.location.tz) { setTZ(c.location.tz); DEVS.forEach(function (d) { if (d.sum) render(d); }); } }).catch(function () {});
+zlocs(); loadLocs();
 rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; cards(); }).catch(function () {})
   .then(function () { return refreshDev(DEVS[0], true); })
   .then(function () { return rpcLocal("KVS.Get", { key: "zmanim_peers" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return window.PEERS || []; }); })
