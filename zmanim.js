@@ -211,7 +211,7 @@ function upcoming(d) {
   // hide a zman's information line when a zman schedule already switches near it
   list = list.filter(function (e) {
     if (e.on !== null || !e.kind) return true;
-    var name = e.kind === 1 ? "Candle lighting" : "Havdalah";
+    var name = String(e.why).split(" - ")[0];
     return !list.some(function (x) { return x.kind === 0 && x.on !== null && String(x.why).indexOf(name) === 0 && Math.abs(x.t - e.t) <= 10800; });
   });
   return list.sort(function (a, b) { return a.t - b.t; });
@@ -233,7 +233,7 @@ function hero() {
   var seen = {}, zs = [];                       // one entry per zman (the script's info markers)
   s.next.forEach(function (e) { if ((e[4] === 1 || e[4] === 2) && e[1] === null && !seen[e[3]]) { seen[e[3]] = 1; zs.push(e); } });
   if (!zs.length) { el.innerHTML = '<p class="hero-wait">' + esc(statusNote(s) || "No candle lighting or havdalah in the next week") + "</p>"; return; }
-  function name(e) { return e[4] === 1 ? "Candle lighting" : "Havdalah"; }
+  function name(e) { var i = e[2].indexOf(" - "); return i > 0 ? e[2].slice(0, i) : e[2]; }   // Candle lighting / Havdalah / Yom Tov night
   function memo(e) { var i = e[2].indexOf(" - "); return i > 0 ? e[2].slice(i + 3) : ""; }
   var a = zs[0], b = zs[1];
   el.innerHTML =
@@ -435,10 +435,19 @@ var GH = (function () {                         // "user/repo" this page was loa
   return m ? m[1] + "/" + m[2] : "cgr210/zmanim-ui";
 })();
 var RAW = "https://raw.githubusercontent.com/" + GH + "/main/";
-var HAV = { 0: "at nightfall (8.5°)", 42: "42 min after sunset", 50: "50 min after sunset", 60: "60 min after sunset", 72: "72 min after sunset" };
+var GEO = { 0: "nightfall 8.5°", 1: "nightfall 7.08°", 2: "nightfall 6°", 42: "42 min after sunset", 50: "50 min after sunset", 60: "60 min after sunset" };
+function havText(c) { return c.hm === 1 ? "Rabbeinu Tam " + c.rt + " min" : "Geonim, " + (GEO[c.g] || c.g); }
 var LOCS = [], NEWLOC = null, ZFILLED = false, ZDIRTY = false, ZPOLL = null;
 
-function cfgOf(d) { var c = d.sum && d.sum.cfg; return c ? { c: c.c, h: c.h, l: c.l || "london", old: c.l === undefined } : null; }
+// a device's zmanim settings. Script v8.2 has only h (minutes after sunset, 0 = 8.5 deg) and no rounding rules.
+function cfgOf(d) {
+  var c = d.sum && d.sum.cfg; if (!c) return null;
+  if (typeof c.hm === "number") return { c: c.c, hm: c.hm, g: c.g, rt: c.rt, l: c.l || "london", old: false };
+  return { c: c.c, hm: c.h >= 72 ? 1 : 0, g: c.h >= 72 ? 0 : c.h, rt: c.h >= 72 ? c.h : 72, l: c.l || "london", old: true };
+}
+function sameCfg(a, b) { return a.c === b.c && a.hm === b.hm && a.g === b.g && (a.hm !== 1 || a.rt === b.rt) && a.l === b.l; }
+function zform() { return { c: Math.round(+$("zc").value), hm: +$("zhm").value, g: +$("zg").value, rt: +$("zrt").value }; }
+function zhv() { $("zrtl").hidden = $("zhm").value !== "1"; }
 function locById(id) {
   if (NEWLOC && NEWLOC.id === id) return NEWLOC;
   for (var i = 0; i < LOCS.length; i++) if (LOCS[i].id === id) return LOCS[i];
@@ -448,9 +457,20 @@ function locName(id) { var L = locById(id); return L ? (L.name || L.id) : id; }
 function zloc() {                               // the location chosen in the form
   return locById($("zl").value) || LOCS[0] || { id: "london", name: "London", lat: 51.50853, lon: -0.12574, tz: "Europe/London" };
 }
-function loadLocs() {
-  return fetch(RAW + "locations.json?t=" + Date.now(), { cache: "no-store" })
+function fetchLocs() {
+  // GitHub's API first: it isn't cached, so a location added a minute ago is there. Then the plain file (cached up to ~5 min).
+  var t = tokGet(), h = { "Accept": "application/vnd.github+json" };
+  if (t) h.Authorization = "Bearer " + t;
+  return fetch("https://api.github.com/repos/" + GH + "/contents/locations.json?ref=main", { cache: "no-store", headers: h })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (f) { return JSON.parse(b64dec(f.content)); })
+    .catch(function () {
+      return fetch(RAW + "locations.json?t=" + Date.now(), { cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
+    });
+}
+function loadLocs() {
+  return fetchLocs()
     .then(function (a) {
       LOCS = a;
       if (NEWLOC && LOCS.some(function (x) { return x.id === NEWLOC.id; })) NEWLOC = null;
@@ -468,7 +488,7 @@ function zlocs() {                              // fill the Location list, keepi
   }).join("");
   $("zl").value = cur;
 }
-function zfill(c) { $("zc").value = c.c; $("zh").value = c.h; if (locById(c.l)) $("zl").value = c.l; else { zlocs(); $("zl").value = c.l; } }
+function zfill(c) { $("zc").value = c.c; $("zhm").value = c.hm; $("zg").value = c.g; $("zrt").value = c.rt; zhv(); if (locById(c.l)) $("zl").value = c.l; else { zlocs(); $("zl").value = c.l; } }
 function zchanged() { ZDIRTY = true; $("zmsg").textContent = ""; if ($("zweek").open) wk(0); }
 
 // summary line + warnings; called whenever a device's status comes in
@@ -476,36 +496,40 @@ function zshow() {
   var c0 = DEVS[0] && cfgOf(DEVS[0]);
   if (!c0) return;
   if (!ZFILLED && !ZDIRTY) { zfill(c0); ZFILLED = true; }
-  $("zsum").textContent = locName(c0.l) + ", candles " + c0.c + " min before sunset, havdalah " + (HAV[c0.h] || c0.h + " min after sunset");
+  $("zsum").textContent = locName(c0.l) + ", candles " + c0.c + " min before sunset, havdalah " + havText(c0);
   var diff = [], old = [];
   DEVS.forEach(function (d) {
     var c = cfgOf(d); if (!c || d.dead) return;
-    if (c.c !== c0.c || c.h !== c0.h || c.l !== c0.l) diff.push(d.name + " (" + locName(c.l) + ", " + c.c + " min, havdalah " + (HAV[c.h] || c.h + " min") + ")");
+    if (!sameCfg(c, c0)) diff.push(d.name + " (" + locName(c.l) + ", " + c.c + " min, havdalah " + havText(c) + ")");
     if (c.old) old.push(d.name);
   });
   var w = [];
   if (diff.length) w.push("Not the same on every device: " + diff.join("; ") + ". Save to make them match.");
-  if (old.length) w.push(old.join(", ") + (old.length > 1 ? " have" : " has") + " the older script (v8.2), which can only use London. Update it to v8.3 to use another location.");
+  if (old.length) w.push(old.join(", ") + (old.length > 1 ? " have" : " has") + " the older script (v8.2): London only, Hebcal's rounding instead of yours, no 8-minute rule and no 7.08° / 6°. Update to v8.3.");
   $("zwarn").textContent = w.join(" ");
   $("zwarn").hidden = !w.length;
 }
 
 function zsave() {
-  var c = Math.round(+$("zc").value), h = +$("zh").value, L = zloc(), m = $("zmsg");
+  var F = zform(), c = F.c, L = zloc(), m = $("zmsg");
   if (!($("zc").value !== "" && c >= 0 && c <= 60)) { m.textContent = "Candle lighting must be 0 to 60 minutes"; return; }
   if (L === NEWLOC) { m.textContent = "Finish adding " + L.name + " on GitHub first (steps under Add a location)."; return; }
+  if (!/^[a-z0-9_-]{1,30}$/.test(L.id)) { m.textContent = "The id \"" + L.id + "\" in locations.json can't be used: it must be lower-case letters, digits or - (e.g. \"" + String(L.id).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "\"). Change the id on GitHub; the name can stay as it is."; return; }
   m.textContent = "Checking the times file for " + (L.name || L.id);
-  fetch(RAW + "times/" + L.id + ".csv?t=" + Date.now(), { cache: "no-store" })
+  fetch(RAW + "times/" + L.id + ".v2.csv?t=" + Date.now(), { cache: "no-store" })
     .then(function (r) { return r.ok ? r.text() : ""; }, function () { return null; })
     .then(function (b) {
-      if (b === "" || (b && b.indexOf("#zmanim v1") !== 0)) throw new Error("There's no times file for " + (L.name || L.id) + " on GitHub yet. If you've just added it, wait a minute and try again.");
+      if (b === "" || (b && b.indexOf("#zmanim v2") !== 0)) throw new Error("There's no times file for " + (L.name || L.id) + " on GitHub yet. If you've just added it, wait a minute and try again.");
       var devs = DEVS.filter(function (d) { return d.core !== undefined && !d.dead; }), errs = [], ok = 0;
       m.textContent = "Saving";
       return devs.reduce(function (p, d) {
         return p.then(function () {
           var cf = cfgOf(d);
           if (cf && cf.old && L.id !== "london") { errs.push(d.name + ": needs script v8.3 for another location"); return; }
-          return core(d, "set=1&c=" + c + "&h=" + h + "&il=0&ps=1" + (cf && cf.old ? "" : "&l=" + encodeURIComponent(L.id)))
+          if (cf && cf.old && F.hm === 0 && F.g < 42 && F.g !== 0) { errs.push(d.name + ": needs script v8.3 for " + GEO[F.g]); return; }
+          var q = cf && cf.old ? "&h=" + (F.hm === 1 ? F.rt : F.g)                 // v8.2: minutes after sunset, 0 = 8.5 deg
+                               : "&hm=" + F.hm + "&g=" + F.g + "&rt=" + F.rt + "&l=" + encodeURIComponent(L.id);
+          return core(d, "set=1&c=" + c + q + "&il=0&ps=1")
             .then(function (s) { if (s.msg && !/^Saved/.test(s.msg)) errs.push(d.name + ": " + s.msg); else ok++; d.sum = s; },
                   function (e) { errs.push(d.name + ": " + e.message); });
         });
@@ -520,24 +544,83 @@ function zsave() {
 }
 
 // ---- add a location: the page writes the new locations.json, you commit it on GitHub, the job makes the times file
+// GitHub token (optional): lets the page commit locations.json itself. Kept only in this browser.
+var TOKKEY = "zmanim-github-token";
+function tokGet() { try { return localStorage.getItem(TOKKEY) || ""; } catch (e) { return ""; } }
+function tokSave() {
+  var v = $("ztok").value.trim();
+  if (!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(v)) { $("ztmsg").textContent = "That doesn't look like a GitHub token (it starts with github_pat_)"; return; }
+  $("ztmsg").textContent = "Checking the token";
+  gh("GET", "", null, v).then(function (r) {
+    if (r.permissions && r.permissions.push === false) throw new Error("this token can't change " + GH);
+    try { localStorage.setItem(TOKKEY, v); } catch (e) { throw new Error("this browser won't store it (private window?)"); }
+    $("ztok").value = ""; tokShow(); $("ztmsg").textContent = "Saved. Add a location and the page commits it for you.";
+  }).catch(function (e) { $("ztmsg").textContent = "Not saved: " + e.message; });
+}
+function tokForget() { try { localStorage.removeItem(TOKKEY); } catch (e) { } tokShow(); $("ztmsg").textContent = "Forgotten in this browser."; }
+function tokShow() {
+  var t = tokGet();
+  $("ztok-set").hidden = !t; $("ztok-new").hidden = !!t;
+  $("zgo").textContent = t ? "Add location" : "Next";
+}
+// GitHub API call for this repo; path "" = the repo itself
+function gh(method, path, body, tok) {
+  tok = tok || tokGet() || $("ztok").value.trim();
+  return fetch("https://api.github.com/repos/" + GH + (path ? "/contents/" + path : ""), {
+    method: method, cache: "no-store",
+    headers: { "Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    body: body ? JSON.stringify(body) : undefined
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (r.ok) return j;
+      if (r.status === 401) throw new Error("GitHub didn't accept the token (wrong, or expired)");
+      if (r.status === 403 || r.status === 404) throw new Error("the token doesn't have access to " + GH + " (needs Contents: Read and write)");
+      if (r.status === 409) throw new Error("locations.json changed at the same moment; press Add location again");
+      throw new Error("GitHub said " + r.status + (j.message ? ": " + j.message : ""));
+    });
+  });
+}
+function b64dec(s) { return decodeURIComponent(escape(atob(String(s).replace(/\s/g, "")))); }
+function b64enc(s) { return btoa(unescape(encodeURIComponent(s))); }
+function locText(list) {
+  return "[\n" + list.map(function (x) { return "  " + JSON.stringify(x).replace(/,"/g, ', "').replace(/":/g, '": ').replace(/^\{/, "{ ").replace(/\}$/, " }"); }).join(",\n") + "\n]\n";
+}
+
 function zprep() {
-  var nm = $("zn").value.trim(), co = $("zco").value.trim().match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/), m = $("zamsg");
+  var nm = $("zn").value.trim(), co = $("zco").value.trim().match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/), m = $("zamsg"), tok = tokGet();
   if (!nm || nm.length > 40) { m.textContent = "Enter a name (up to 40 characters)"; return; }
   if (!co) { m.textContent = "Enter the coordinates as latitude, longitude, e.g. 51.5484, 0.1716"; return; }
   var lat = +co[1], lon = +co[2];
   if (lat < -90 || lat > 90 || lon < -180 || lon > 180) { m.textContent = "Latitude must be -90 to 90 and longitude -180 to 180"; return; }
+  function entry(list) {
+    var base = nm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "site", id = base, n = 2;
+    while (list.some(function (x) { return x.id === id; })) id = base + "-" + n++;
+    return { id: id, lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5, tz: TZ || "Europe/London", name: nm };
+  }
+  function pending(L) { NEWLOC = L; zlocs(); $("zl").value = L.id; zchanged(); zwatch(L.id); }
   m.textContent = "Getting the current list from GitHub";
-  fetch(RAW + "locations.json?t=" + Date.now(), { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  if (tok) {                                     // automatic: commit locations.json through the GitHub API
+    var sha;
+    gh("GET", "locations.json").then(function (f) {
+      sha = f.sha;
+      var list = JSON.parse(b64dec(f.content)), L = entry(list);
+      LOCS = list;
+      m.textContent = "Adding " + nm + " to locations.json on GitHub";
+      return gh("PUT", "locations.json", { message: "Add location " + nm, content: b64enc(locText(list.concat([L]))), sha: sha }).then(function () { return L; });
+    }).then(function (L) {
+      $("zsteps").hidden = true; m.textContent = "Added to GitHub.";
+      pending(L);
+    }).catch(function (e) { m.textContent = "Couldn't add it: " + e.message; });
+    return;
+  }
+  fetchLocs()
     .then(function (list) {
       LOCS = list;
-      var base = nm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "site", id = base, n = 2;
-      while (list.some(function (x) { return x.id === id; })) id = base + "-" + n++;
-      NEWLOC = { id: id, lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5, tz: TZ || "Europe/London", name: nm };
-      $("zjson").value = "[\n" + list.concat([NEWLOC]).map(function (x) { return "  " + JSON.stringify(x).replace(/,"/g, ', "').replace(/":/g, '": ').replace(/^\{/, "{ ").replace(/\}$/, " }"); }).join(",\n") + "\n]\n";
+      var L = entry(list);
+      $("zjson").value = locText(list.concat([L]));
       $("zgh").href = "https://github.com/" + GH + "/edit/main/locations.json";
       $("zsteps").hidden = false; m.textContent = "";
-      zlocs(); $("zl").value = id; zchanged();
-      zwatch(id);
+      pending(L);
     })
     .catch(function (e) { m.textContent = "Couldn't get locations.json from GitHub (" + e.message + ")"; });
 }
@@ -553,12 +636,12 @@ function zcopy() {
 function zwatch(id) {                            // wait for GitHub to make times/<id>.csv
   if (ZPOLL) clearInterval(ZPOLL);
   var tries = 0, el = $("zpoll");
-  el.textContent = "Waiting for the times file. Once you've committed on GitHub it usually takes about a minute.";
+  el.textContent = tokGet() ? "Waiting for GitHub to make the times file. This usually takes about a minute." : "Waiting for the times file. Once you've committed on GitHub it usually takes about a minute.";
   ZPOLL = setInterval(function () {
     if (++tries > 60) { clearInterval(ZPOLL); ZPOLL = null; el.textContent = "Still no times file after 20 minutes. Check the Actions tab on GitHub for a failed run."; return; }
-    fetch(RAW + "times/" + id + ".csv?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; })
+    fetch(RAW + "times/" + id + ".v2.csv?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; })
       .then(function (b) {
-        if (b.indexOf("#zmanim v1") !== 0) return;
+        if (b.indexOf("#zmanim v2") !== 0) return;
         clearInterval(ZPOLL); ZPOLL = null;
         return loadLocs().then(function () {
           $("zl").value = id; zchanged();
@@ -597,14 +680,28 @@ function zrows(hc, L, start, end) {
   evs.forEach(function (e) {
     var ds = e.getDesc(); if (ds !== "Candle lighting" && ds !== "Havdalah") return;
     var g = e.getDate().greg(), d = ymdL(g), z = new hc.Zmanim(loc, g, false);
-    var sunset = Math.round(hc.Zmanim.roundTime(z.sunset()).getTime() / 1000), tzeit = Math.round(hc.Zmanim.roundTime(z.tzeit(8.5)).getTime() / 1000);
+    var ex = function (x) { return x instanceof Date && !isNaN(x.getTime()) ? Math.floor(x.getTime() / 1000) : 0; };   // exact, as the GitHub job writes
+    var sunset = ex(z.sunset()), tz = [ex(z.tzeit(8.5)), ex(z.tzeit(7.083)), ex(z.tzeit(6))];
     var nx = new Date(g.getFullYear(), g.getMonth(), g.getDate() + 1), nd = ymdL(nx), wd = g.getDay();
     if (ds === "Candle lighting") {
       var mode = e.eventTime.getTime() > z.sunset().getTime() ? 1 : 0, shab = nx.getDay() === 6;
-      rows.push({ date: d, type: 1, sunset: sunset, tzeit: tzeit, mode: mode, shab: shab, yt: !!yt[nd], first: mode === 0 && wd !== 6 && !yt[d], memo: name[nd] || (shab ? "Shabbat" : "") });
-    } else rows.push({ date: d, type: 2, sunset: sunset, tzeit: tzeit, mode: 1, shab: wd === 6, yt: !!yt[d], first: false, memo: name[d] || (wd === 6 ? "Shabbat" : "") });
+      rows.push({ date: d, type: 1, sunset: sunset, tz: tz, mode: mode, shab: shab, yt: !!yt[nd], first: mode === 0 && wd !== 6 && !yt[d], memo: name[nd] || (shab ? "Shabbat" : "") });
+    } else rows.push({ date: d, type: 2, sunset: sunset, tz: tz, mode: 1, shab: wd === 6, yt: !!yt[d], first: false, memo: name[d] || (wd === 6 ? "Shabbat" : "") });
   });
   return rows;
+}
+// The same rules as the script (v8.3): havdalah up to 24 seconds past the minute -> that minute, otherwise the next;
+// Rabbeinu Tam never less than 8 minutes after the Geonim. $S/$G/$R in "how" = sunset / Geonim / Rabbeinu Tam times.
+function r24(t) { var x = t % 60; return x <= 24 ? t - x : t - x + 60; }
+function havCalc(r, F) {
+  var gt = F.g >= 42 ? r.sunset + F.g * 60 : r.tz[F.g];
+  if (!gt) return { t: 0, how: "" };
+  gt = r24(gt);
+  var gtxt = "Geonim, " + GEO[F.g] + " = $G";
+  if (F.hm !== 1) return { t: gt, g: gt, how: gtxt + " (sunset $S)" };
+  var rt = r24(r.sunset + F.rt * 60);
+  if (rt < gt + 480) return { t: gt + 480, g: gt, r: rt, how: "Rabbeinu Tam: " + F.rt + " min after sunset $S would be $R, less than 8 min after the Geonim ($G), so Geonim + 8" };
+  return { t: rt, g: gt, r: rt, how: "Rabbeinu Tam, " + F.rt + " min after sunset $S (Geonim $G)" };
 }
 function hmIn(t, tz) { var d = new Date((t + tzOff(t, tz)) * 1000); return p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()); }
 function wallIn(w, tz) { var t = w - tzOff(w, tz); return w - tzOff(t, tz); }
@@ -616,30 +713,32 @@ function wk(n) {
   var p = $("zwd").value.split("-"), sel = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n));
   $("zwd").value = sel.toISOString().slice(0, 10);
   var sun = Date.UTC(sel.getUTCFullYear(), sel.getUTCMonth(), sel.getUTCDate() - sel.getUTCDay()) / 1000;   // Sunday 00:00 as "wall" seconds
-  var c = Math.round(+$("zc").value) || 0, h = +$("zh").value;
+  var F = zform(), c = F.c || 0;
   out.innerHTML = '<p class="empty">Working it out</p>';
   hebcalLib().then(function (hc) {
     var s0 = new Date(sun * 1000);
     var rows = zrows(hc, L, new Date(s0.getUTCFullYear(), s0.getUTCMonth(), s0.getUTCDate() - 7), new Date(s0.getUTCFullYear(), s0.getUTCMonth(), s0.getUTCDate() + 8));
     // the zmanim, as the Shellys work them out from the times file and these settings
     var z = rows.map(function (r) {
-      return { r: r, kind: r.type, t: (r.type === 1 && r.mode === 0) ? r.sunset - c * 60 : (h > 0 ? r.sunset + h * 60 : r.tzeit) };
-    }).sort(function (a, b) { return a.t - b.t; });
+      if (r.type === 1 && r.mode === 0) return { r: r, kind: 1, t: r.sunset - r.sunset % 60 - c * 60 };
+      var hv = havCalc(r, F); return { r: r, kind: r.type, t: hv.t, hv: hv };
+    }).filter(function (e) { return e.t; }).sort(function (a, b) { return a.t - b.t; });
     var win = [], st = null;                       // Shabbos / Yom Tov: from candle lighting to havdalah
     z.forEach(function (e) { if (e.kind === 1 && st === null) st = e.t; else if (e.kind === 2 && st !== null) { win.push([st, e.t]); st = null; } });
     if (st !== null) win.push([st, Infinity]);
     var a = wallIn(sun, L.tz), b = wallIn(sun + 7 * 86400, L.tz), items = [];
     z.forEach(function (e) {
       if (e.t < a || e.t >= b) return;
-      var r = e.r, nm = e.kind === 1 ? "Candle lighting" : "Havdalah";
-      var how = e.kind === 1 && r.mode === 1 ? "at nightfall, from an existing flame" : e.kind === 1 ? c + " min before sunset (" + hmIn(r.sunset, L.tz) + ")" : (h > 0 ? h + " min after sunset (" + hmIn(r.sunset, L.tz) + ")" : "nightfall, 8.5°");
+      var r = e.r, nm = e.kind === 2 ? "Havdalah" : r.mode === 0 ? "Candle lighting" : "Yom Tov night";
+      var how = e.hv ? (r.type === 1 ? "no candle lighting time, havdalah time used: " : "") + e.hv.how.replace(/\$S/g, hmIn(r.sunset, L.tz)).replace(/\$G/g, hmIn(e.hv.g, L.tz)).replace(/\$R/g, e.hv.r ? hmIn(e.hv.r, L.tz) : "")
+                     : c + " min before sunset (sunset " + hmIn(r.sunset, L.tz) + ")";
       items.push({ t: e.t, info: true, why: nm + (r.memo ? ", " + r.memo : "") + ": " + how });
       DEVS.forEach(function (d) {
         if (d.core === undefined || d.dead) return;
         (d.rj || []).forEach(function (q) {
           if (q[0] !== e.kind || !q[4]) return;
           if ((q[3] === 1 && !r.shab) || (q[3] === 2 && !r.yt) || (q[3] === 3 && !r.first)) return;
-          items.push({ t: e.t + q[1] * 60, on: !!q[2], why: d.name + ": " + rtxt(q) + (q[3] ? ", " + FL[q[3]] : "") });
+          items.push({ t: e.t + q[1] * 60, on: !!q[2], why: d.name + ": " + rtxt(q) + (r.type === 1 && r.mode === 1 ? " (Yom Tov night)" : "") + (q[3] ? ", " + FL[q[3]] : "") });
         });
       });
     });
@@ -741,19 +840,28 @@ document.getElementById("app").outerHTML =
     '<p class="hint">For all devices. What each device does at candle lighting and havdalah is set in its own Schedules.</p>' +
     '<label>Location<select id="zl" onchange="zchanged()"></select></label><p class="note" id="zlmsg"></p>' +
     '<label>Candle lighting, minutes before sunset<input type="number" id="zc" min="0" max="60" oninput="zchanged()"></label>' +
-    '<label>Havdalah<select id="zh" onchange="zchanged()"><option value="0">Nightfall (8.5&deg;)</option><option value="42">42 minutes after sunset</option><option value="50">50 minutes after sunset</option><option value="60">60 minutes after sunset</option><option value="72">72 minutes after sunset (Rabbeinu Tam)</option></select></label>' +
+    '<label>Havdalah<select id="zhm" onchange="zhv();zchanged()"><option value="0">Geonim</option><option value="1">Rabbeinu Tam</option></select></label>' +
+    '<label>Geonim<select id="zg" onchange="zchanged()"><option value="0">Nightfall, sun 8.5&deg; below</option><option value="1">Nightfall, sun 7.08&deg; below</option><option value="2">Nightfall, sun 6&deg; below</option><option value="42">42 minutes after sunset</option><option value="50">50 minutes after sunset</option><option value="60">60 minutes after sunset</option></select></label>' +
+    '<label id="zrtl">Rabbeinu Tam<select id="zrt" onchange="zchanged()"><option value="72">72 minutes after sunset</option><option value="90">90 minutes after sunset</option></select></label>' +
+    '<p class="hint">Rabbeinu Tam is never less than 8 minutes after the Geonim time. Sunset and candle lighting drop the seconds; havdalah up to 24 seconds past the minute uses that minute, otherwise the next.</p>' +
     '<p class="warn" id="zwarn" hidden></p>' +
     '<div class="row"><button class="primary" onclick="zsave()">Save for all devices</button></div><p class="note" id="zmsg" aria-live="polite"></p>' +
     '<details class="sub" id="zadd"><summary>Add a location</summary>' +
       '<p class="hint">In Google Maps, right-click the spot (on a phone, press and hold). The numbers that appear are the coordinates; click them to copy.</p>' +
       '<label>Name<input id="zn" maxlength="40" placeholder="Site office"></label>' +
       '<label>Coordinates<input id="zco" placeholder="51.5484, 0.1716" inputmode="decimal"></label>' +
-      '<div class="row"><button onclick="zprep()">Next</button></div><p class="note" id="zamsg" aria-live="polite"></p>' +
+      '<div class="row"><button class="primary" id="zgo" onclick="zprep()">Next</button></div><p class="note" id="zamsg" aria-live="polite"></p>' +
       '<div id="zsteps" hidden><ol class="steps">' +
         '<li>Copy the updated list of locations.<textarea id="zjson" rows="4" readonly aria-label="Updated locations.json"></textarea><div class="row"><button onclick="zcopy()">Copy</button></div></li>' +
         '<li><a id="zgh" target="_blank" rel="noopener">Open locations.json on GitHub</a>, select everything in it, paste, and press <b>Commit changes</b>.</li>' +
         '<li>Come back here. GitHub makes the times file in about a minute; this page checks, then selects the new location. Press <b>Save for all devices</b>.</li>' +
-      '</ol><p class="note" id="zpoll" aria-live="polite"></p></div>' +
+      '</ol></div><p class="note" id="zpoll" aria-live="polite"></p>' +
+      '<div class="tok"><h4>Add locations automatically</h4>' +
+        '<div id="ztok-new"><p class="hint">With a GitHub token this page commits the new location itself; without one you paste it on GitHub by hand. The token is kept only in this browser.</p>' +
+          '<label>GitHub token<input type="password" id="ztok" autocomplete="off" spellcheck="false" placeholder="github_pat_..."></label>' +
+          '<div class="row"><button onclick="tokSave()">Save token</button></div></div>' +
+        '<div id="ztok-set" hidden><p class="hint">This browser has a GitHub token, so new locations are committed automatically.</p><div class="row"><button onclick="tokForget()">Forget token</button></div></div>' +
+        '<p class="note" id="ztmsg" aria-live="polite"></p></div>' +
     '</details>' +
   '</details>' +
   '<details class="manage fold" id="zweek" ontoggle="if(this.open)wk(0)"><summary>Check a week</summary>' +
@@ -777,7 +885,7 @@ document.title = "Zmanim";
 cards();
 setTZ((function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return null; } })());   // until the device says
 rpcLocal("Sys.GetConfig").then(function (c) { if (c && c.location && c.location.tz) { setTZ(c.location.tz); DEVS.forEach(function (d) { if (d.sum) render(d); }); } }).catch(function () {});
-zlocs(); loadLocs();
+zlocs(); loadLocs(); tokShow();
 rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; cards(); }).catch(function () {})
   .then(function () { return refreshDev(DEVS[0], true); })
   .then(function () { return rpcLocal("KVS.Get", { key: "zmanim_peers" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return window.PEERS || []; }); })
