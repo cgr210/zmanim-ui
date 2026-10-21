@@ -179,3 +179,6 @@ input[type=number] { width: 84px; }
 #zwk .ev { grid-template-columns: 3.6em 2.4em minmax(0, 1fr); }
 .ev.warn .ev-why { color: #c2410c; }
 #zlmsg:empty { display: none; }
+.tok { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.tok h4 { font-size: 16px; margin: 0 0 4px; }
+.tok label input { flex: 1 1 200px; min-width: 0; background: var(--bg); border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px; min-height: 42px; }
