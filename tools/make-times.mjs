@@ -1,4 +1,11 @@
-// Builds times/<id>.csv for each entry in locations.json, using Hebcal's own library (@hebcal/core).
+// Builds times/<id>.csv (v1, for script v8.2) and times/<id>.v2.csv (v2, for script v8.3+) for each entry in
+// locations.json, using Hebcal's own library (@hebcal/core).
+//
+// v2 file: exact times in unix seconds (not rounded); each Shelly applies its own rounding rules and settings.
+//   #zmanim v2,made=<unix>,loc=<id>
+//   type,sunset,tz85,tz708,tz6,mode,shab,yt,first,memo
+//     tz85 / tz708 / tz6   nightfall with the sun 8.5 / 7.08 / 6 degrees below the horizon (0 if it doesn't happen)
+//     other fields as in v1 below
 // Runs daily on GitHub Actions. The Shellys read these files; they apply their own candle/havdalah minutes.
 //
 // File format (plain ASCII, one event per line):
@@ -44,6 +51,8 @@ for (const L of locs) {
     if (e.getFlags() & flags.CHAG) name[ymd(e.getDate().greg())] = ascii(e.render('en'));
   }
   const lines = [`#zmanim v1,made=${unix(today)},loc=${L.id}`];
+  const lines2 = [`#zmanim v2,made=${unix(today)},loc=${L.id}`];
+  const exact = (d) => (d instanceof Date && !isNaN(d.getTime())) ? Math.floor(d.getTime() / 1000) : 0;
   for (const e of evs) {
     const desc = e.getDesc();
     if (desc !== 'Candle lighting' && desc !== 'Havdalah') continue;
@@ -64,7 +73,9 @@ for (const L of locs) {
       row = [2, unix(sunset), unix(tzeit), 1, wd === 6 ? 1 : 0, yt.has(d) ? 1 : 0, 0, name[d] || (wd === 6 ? 'Shabbat' : '')];
     }
     lines.push(row.join(','));
+    lines2.push([row[0], exact(z.sunset()), exact(z.tzeit(8.5)), exact(z.tzeit(7.083)), exact(z.tzeit(6))].concat(row.slice(3)).join(','));
   }
   writeFileSync(new URL(`../times/${L.id}.csv`, import.meta.url), lines.join('\n') + '\n');
+  writeFileSync(new URL(`../times/${L.id}.v2.csv`, import.meta.url), lines2.join('\n') + '\n');
   console.log(`${L.id}: ${lines.length - 1} events`);
 }
