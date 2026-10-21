@@ -157,3 +157,25 @@ input[type=number] { width: 84px; }
   .hero-time { font-size: 56px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
+/* ---------- zmanim settings + check a week (all devices) ---------- */
+.fold { margin-top: 12px; }
+.detail + .fold { margin-top: 28px; }
+.fold + .manage:not(.fold) { margin-top: 12px; }
+.sum-note { display: block; font-weight: 400; color: var(--muted); font-size: 15px; margin-top: 2px; }
+.warn { color: #c2410c; font-size: 15px; margin: 8px 0 0; }
+.sub { margin-top: 16px; padding-top: 4px; border-top: 1px solid var(--line); }
+.sub summary { cursor: pointer; padding: 10px 0; font-weight: 700; }
+.sub label input:not([type=checkbox]) { flex: 1 1 200px; min-width: 0; background: var(--bg); border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px; min-height: 42px; }
+.steps { margin: 12px 0 0; padding-left: 22px; }
+.steps li { margin-bottom: 12px; }
+.steps a { color: var(--focus); font-weight: 700; }
+.steps textarea { display: block; width: 100%; margin-top: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; background: var(--bg); color: var(--text); border: 1.5px solid var(--line); border-radius: 10px; padding: 8px; resize: vertical; }
+.wk-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 8px; }
+.wk-bar button { background: transparent; border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+.wk-bar input { background: var(--bg); border: 1.5px solid var(--line); border-radius: 10px; padding: 7px 10px; min-height: 42px; }
+.wk-head { font-weight: 700; margin: 12px 0 0; }
+.wk-day { font: 700 18px/1.3 var(--serif); margin: 16px 0 4px; }
+#zwk .ev { grid-template-columns: 3.6em 2.4em minmax(0, 1fr); }
+.ev.warn .ev-why { color: #c2410c; }
+#zlmsg:empty { display: none; }
