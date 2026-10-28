@@ -202,14 +202,15 @@ function refreshDev(d, withSchedules) {
 // names for relays of a multi-relay device: the relay's own name in the Shelly app, else "<device>, output N"
 function chNames(d) {
   var s = d.sum, m = d.sub || d; if (!s || !s.chs || s.chs.length < 2) return;
+  if (!m.devName) m.devName = m.dname || m.name;          // the device's own name, before any relay naming
   s.chs.forEach(function (c) {
     var e = c[0] === m.sw ? m : DEVS.filter(function (x) { return x.sub === m && x.sw === c[0]; })[0];
-    if (e) e.name = c[1] || ((m.dname || m.devName || m.ip || "This device") + ", output " + (c[0] + 1));
+    if (e) e.name = c[1] || ((m.dname || m.devName || "This device") + ", output " + (c[0] + 1));
   });
 }
 function chExpand(d, s) {                        // first reply from a multi-relay device: add its other relays
   if (d.sub || d.multi || !s || !s.chs || s.chs.length < 2) return;
-  d.multi = true; if (!d.devName) d.devName = d.dname || d.name;
+  d.multi = true;
   var at = DEVS.indexOf(d) + 1, add = [];
   s.chs.forEach(function (c) {
     if (c[0] === d.sw) return;
@@ -819,13 +820,17 @@ var DE = null;
 function dlist() {
   if (DE === null) DE = DEVS.filter(main).map(function (d) {
     var nm = d.base ? (d.dname || "") : (DEVS[0].dname || "");
-    return { ip: d.ip || "", oip: d.ip || "", mac: d.mac || "", name: nm, orig: nm, self: !d.base };
+    var chs = d.multi && d.sum && d.sum.chs ? d.sum.chs.map(function (c) { return { sw: c[0], name: c[1] || "", orig: c[1] || "" }; }) : [];
+    return { ip: d.ip || "", oip: d.ip || "", mac: d.mac || "", name: nm, orig: nm, self: !d.base, chs: chs };
   });
   $("dvl").innerHTML = DE.map(function (e, i) {
     return '<li class="dv"><input aria-label="Name" placeholder="Name" value="' + esc(e.name) + '" oninput="DE[' + i + '].name=this.value">' +
       (e.self ? '<span class="dv-self">This device</span>' :
         '<input aria-label="IP address" placeholder="IP address" inputmode="decimal" value="' + esc(e.ip) + '" oninput="DE[' + i + '].ip=this.value.trim()">' +
-        '<button onclick="ddel(' + i + ')">Remove</button>') + "</li>";
+        '<button onclick="ddel(' + i + ')">Remove</button>') + "</li>" +
+      (e.chs || []).map(function (c, k) {                 // outputs of a multi-relay device
+        return '<li class="dv dv-ch"><span class="dv-out">Output ' + (c.sw + 1) + '</span><input aria-label="Name of output ' + (c.sw + 1) + '" placeholder="Name of output ' + (c.sw + 1) + '" value="' + esc(c.name) + '" oninput="DE[' + i + '].chs[' + k + '].name=this.value">' + "</li>";
+      }).join("");
   }).join("");
 }
 function dadd() { if (DE === null) dlist(); DE.push({ ip: "", oip: "", mac: "", name: "", orig: "", self: false }); dlist(); }
@@ -834,7 +839,7 @@ function dsave() {
   var ips = [], bad = null;
   DE.forEach(function (e) { if (e.self) return; if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(e.ip)) bad = e.ip || "(empty)"; else ips.push(e.ip + (e.mac && e.ip === e.oip ? "#" + e.mac : "")); });
   if (bad) { $("dmsg").textContent = "Not a valid IP address: " + bad; return; }
-  if (DE.some(function (e) { return e.name.length > 40; })) { $("dmsg").textContent = "Names can be up to 40 characters"; return; }
+  if (DE.some(function (e) { return e.name.length > 40 || (e.chs || []).some(function (c) { return c.name.length > 40; }); })) { $("dmsg").textContent = "Names can be up to 40 characters"; return; }
   $("dmsg").textContent = "Saving";
   var errs = [], p = rpcLocal("KVS.Set", { key: "zmanim_peers", value: JSON.stringify(ips) });
   DE.forEach(function (e) {
@@ -842,6 +847,15 @@ function dsave() {
     p = p.then(function () {
       return rpcAt(e.self ? "" : "http://" + e.ip, "Sys.SetConfig", { config: { device: { name: e.name || null } } })
         .catch(function (x) { errs.push((e.name || e.ip) + ": " + x.message); });
+    });
+  });
+  DE.forEach(function (e) {                         // output names are stored on the device (Switch.SetConfig)
+    (e.chs || []).forEach(function (c) {
+      if (c.name.trim() === c.orig) return;
+      p = p.then(function () {
+        return rpcAt(e.self ? "" : "http://" + e.ip, "Switch.SetConfig", { id: c.sw, config: { name: c.name.trim() || null } })
+          .catch(function (x) { errs.push("output " + (c.sw + 1) + " of " + (e.name || e.ip) + ": " + x.message); });
+      });
     });
   });
   p.then(function () {
@@ -908,7 +922,7 @@ document.getElementById("app").outerHTML =
     '<div id="zwk" aria-live="polite"></div>' +
   '</details>' +
   '<details class="manage" id="manage" ontoggle="if(this.open){DE=null;dlist();}"><summary>Manage devices</summary>' +
-    '<p class="hint">The devices shown on this page. Names are each device\'s own name.</p>' +
+    '<p class="hint">The devices shown on this page. Names are saved on each device; a device with several outputs (Pro 4PM) also lists its outputs to name.</p>' +
     '<ul id="dvl" class="dvl"></ul>' +
     '<div class="row"><button onclick="dadd()">Add device</button><button class="primary" onclick="dsave()">Save devices</button></div>' +
     '<p class="note" id="dmsg" aria-live="polite"></p></details>' +

@@ -47,12 +47,14 @@ var SIM = (function () {
   function later(f) { waiting.push(f); yieldCh.port2.postMessage(0); }   // device callbacks run in order, between clock steps
 
   function load() { try { return JSON.parse(localStorage.getItem(STORE)) || null; } catch (e) { return null; } }
-  function save() {
-    clearTimeout(saveT);
-    saveT = setTimeout(function () {
+  window.addEventListener("pagehide", function () { if (saveT) { clearTimeout(saveT); saveNow(); } });   // the page reloads itself after some saves
+  function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 200); }
+  function saveNow() {
+    saveT = null;
+    (function () {
       var s = { shift: shift, devs: devs.map(function (d) { return { kv: d.kv, jobs: d.jobs, outs: d.outs, name: d.name, chn: d.chn }; }) };
       try { localStorage.setItem(STORE, JSON.stringify(s)); } catch (e) {}
-    }, 200);
+    })();
   }
   function unix() { return Math.floor(Date.now() / 1000) + shift; }
   function offset(t) { return -new Date(t * 1000).getTimezoneOffset() * 60; }
@@ -142,6 +144,7 @@ var SIM = (function () {
       case "Eth.GetStatus": err(-114, "No handler for Eth.GetStatus");
       case "Sys.SetConfig": d.name = (p.config && p.config.device && p.config.device.name) || null; save(); return { restart_required: false };
       case "Switch.Set": setOut(d, p.id || 0, !!p.on, via === "script" ? "loopback" : via); return { was_on: !p.on };
+      case "Switch.SetConfig": if ((p.id || 0) >= d.outs.length) err(-105, "No switch " + p.id); d.chn[p.id || 0] = (p.config && p.config.name) || ""; save(); return { restart_required: false };
       case "Switch.GetStatus": return { id: p.id || 0, output: d.outs[p.id || 0] };
       case "KVS.Get": if (!(p.key in d.kv)) err(-105, "Argument 'key', value '" + p.key + "' not found !"); return { etag: "x", value: d.kv[p.key] };
       case "KVS.Set": d.kv[p.key] = String(p.value); save(); return { etag: "x", rev: 1 };
