@@ -64,18 +64,22 @@ function evalAt(base, id, code) {
   return rpcAt(base, "Script.Eval", { id: id, code: code }).then(function (r) { return r && r.result !== undefined ? r.result : r; });
 }
 function core(d, q) {
-  return evalAt(d.base, d.core, "webCmd(" + JSON.stringify(q || "") + ")")
+  q = (q ? q + "&" : "") + "ch=" + (d.sw || 0);
+  return evalAt(d.base, d.core, "webCmd(" + JSON.stringify(q) + ")")
     .then(function (v) { return typeof v === "string" ? JSON.parse(v) : v; });
 }
 
 // ------------------------------------------------------------------ devices
 // d = { base, ip, mac, core, sw, name, dname, err, sum (status from the script), sj (schedules), sk (skip list), rj (zman schedules) }
+// A device with several relays (Pro 4PM) gets one entry per relay: the first is the device itself, the others have
+// sub = that first entry and share its address and script. Settings, the device list and renaming use first entries only.
 var DEVS = [{ base: "", core: CORE, sw: SW, name: window.NM || "This device", sj: [], sk: [] }];
 var SEL = null, PEERS_DIRTY = false;
 
 function parsePeer(s) { var p = String(s).split("#"); return { ip: p[0], mac: (p[1] || "").toLowerCase() }; }
+function main(d) { return !d.sub; }
 function savePeers() {
-  var v = DEVS.filter(function (d) { return d.base; }).map(function (d) { return d.ip + (d.mac ? "#" + d.mac : ""); });
+  var v = DEVS.filter(function (d) { return d.base && !d.sub; }).map(function (d) { return d.ip + (d.mac ? "#" + d.mac : ""); });
   return rpcLocal("KVS.Set", { key: "zmanim_peers", value: JSON.stringify(v) });
 }
 // check it is the expected device, then find its zmanim script (the running script that defines webCmd)
@@ -174,22 +178,48 @@ function jobAction(j) {
   if (!c.method || c.method.toLowerCase() !== "switch.set" || !c.params) return null;
   return c.params.on === true ? true : (c.params.on === false ? false : null);
 }
+function rkey(d) { return d.sub ? "zmanim_rules_" + d.sw : "zmanim_rules"; }   // zman schedules: one list per relay
 function loadSchedules(d) {                    // one request at a time: the main Shelly relays requests for the others
   return rpcAt(d.base, "Schedule.List").then(function (r) {
-    d.sj = (r.jobs || []).map(function (j) {
+    d.sj = (r.jobs || []).filter(function (j) {
+      var c = j.calls && j.calls[0], id = c && c.params && typeof c.params.id === "number" ? c.params.id : null;
+      return id === null ? !d.sub : (id === d.sw || (!d.multi && !d.sub));
+    }).map(function (j) {
       var ps = parseSpec(j.timespec || ""), a = jobAction(j), m = j.calls && j.calls[0] && j.calls[0].method;
       return { id: j.id, en: !!j.enable, t: ps && ps.t, d: ps && ps.d, a: a, ts: j.timespec, fx: !!(ps && a !== null), m: m };
     });
   })
     .then(function () { return rpcAt(d.base, "KVS.Get", { key: "zmanim_skip" }).then(function (r) { d.sk = JSON.parse(r.value); }).catch(function () { d.sk = []; }); })
-    .then(function () { return rpcAt(d.base, "KVS.Get", { key: "zmanim_rules" }).then(function (r) { d.rj = JSON.parse(r.value); }).catch(function () { d.rj = []; }); });
+    .then(function () { return rpcAt(d.base, "KVS.Get", { key: rkey(d) }).then(function (r) { d.rj = JSON.parse(r.value); }).catch(function () { d.rj = []; }); });
 }
 function refreshDev(d, withSchedules) {
   if (d.core === undefined) return Promise.resolve();
   var p = withSchedules ? loadSchedules(d).catch(function () {}) : Promise.resolve();
   return p.then(function () { return core(d, ""); })
-    .then(function (s) { d.sum = s; d.err = null; render(d); })
+    .then(function (s) { d.sum = s; d.err = null; chNames(d); render(d); return chExpand(d, s); })
     .catch(function (e) { d.err = "Not reachable just now (" + e.message + ")"; cards(); });
+}
+// names for relays of a multi-relay device: the relay's own name in the Shelly app, else "<device>, output N"
+function chNames(d) {
+  var s = d.sum, m = d.sub || d; if (!s || !s.chs || s.chs.length < 2) return;
+  s.chs.forEach(function (c) {
+    var e = c[0] === m.sw ? m : DEVS.filter(function (x) { return x.sub === m && x.sw === c[0]; })[0];
+    if (e) e.name = c[1] || ((m.dname || m.devName || m.ip || "This device") + ", output " + (c[0] + 1));
+  });
+}
+function chExpand(d, s) {                        // first reply from a multi-relay device: add its other relays
+  if (d.sub || d.multi || !s || !s.chs || s.chs.length < 2) return;
+  d.multi = true; if (!d.devName) d.devName = d.dname || d.name;
+  var at = DEVS.indexOf(d) + 1, add = [];
+  s.chs.forEach(function (c) {
+    if (c[0] === d.sw) return;
+    add.push({ base: d.base, ip: d.ip, mac: d.mac, core: d.core, sw: c[0], sub: d, dname: d.dname, name: "", sj: [], sk: [] });
+  });
+  Array.prototype.splice.apply(DEVS, [at, 0].concat(add));
+  chNames(d); cards(); DE = null;
+  // the first relay's schedules were read before we knew there are several relays: read them again for this relay only
+  return add.reduce(function (p, x) { return p.then(function () { return refreshDev(x, true); }); },
+    loadSchedules(d).then(function () { render(d); }).catch(function () {}));
 }
 // upcoming events for a device: zmanim events from the script + its fixed-time schedules, next 7 days
 function upcoming(d) {
@@ -340,7 +370,14 @@ function after(p) {                              // run a change, then reload th
   var d = SEL; msg("Saving");
   return p.then(function () { return refreshDev(d, true); }).catch(function (e) { msg("Failed: " + e.message); throw e; });
 }
-function skset(d, id, on) { var i = d.sk.indexOf(id); if (on && i < 0) d.sk.push(id); if (!on && i >= 0) d.sk.splice(i, 1); return rpcAt(d.base, "KVS.Set", { key: "zmanim_skip", value: JSON.stringify(d.sk) }); }
+function skset(d, id, on) {                    // the skip list is one per device, shared by its relays: read it fresh first
+  return rpcAt(d.base, "KVS.Get", { key: "zmanim_skip" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return []; })
+    .then(function (sk) {
+      var i = sk.indexOf(id); if (on && i < 0) sk.push(id); if (!on && i >= 0) sk.splice(i, 1);
+      DEVS.forEach(function (x) { if (x.base === d.base) x.sk = sk.slice(); });
+      return rpcAt(d.base, "KVS.Set", { key: "zmanim_skip", value: JSON.stringify(sk) });
+    });
+}
 function sktog(i) { var d = SEL, j = d.sj[i]; after(skset(d, j.id, d.sk.indexOf(j.id) < 0)).then(function () { msg(""); }); }
 function sen(i) {
   var d = SEL, j = d.sj[i];
@@ -354,7 +391,7 @@ function sdel(i) {
 function rsave(d) {
   var v = JSON.stringify(d.rj);
   if (v.length > 250) return Promise.reject(new Error("too many zman schedules for the device's storage"));
-  return rpcAt(d.base, "KVS.Set", { key: "zmanim_rules", value: v }).then(function () { return core(d, "cmd=refresh"); })
+  return rpcAt(d.base, "KVS.Set", { key: rkey(d), value: v }).then(function () { return core(d, "cmd=refresh"); })
     .then(function () { return new Promise(function (ok) { setTimeout(ok, 2500); }); });
 }
 function rchange(f) { var d = SEL, old = JSON.stringify(d.rj || []); d.rj = d.rj || []; f(d.rj); return after(rsave(d).catch(function (e) { d.rj = JSON.parse(old); throw e; })); }
@@ -363,7 +400,8 @@ function rdel(i) { if (confirm("Delete this schedule?")) rchange(function (rj) {
 
 function hclear() {
   var d = SEL; if (!d || !confirm("Clear the switching history for " + d.name + "?")) return;
-  evalAt(d.base, d.core, 'history=[];call("KVS.Set",{key:"zmanim_hist",value:"[]"});1')
+  (d.sum && d.sum.chs ? core(d, "cmd=clear")                       // v8.4: per relay
+    : evalAt(d.base, d.core, 'history=[];call("KVS.Set",{key:"zmanim_hist",value:"[]"});1'))
     .then(function () { return refreshDev(d); })
     .catch(function (e) { alert("Couldn't clear: " + e.message); });
 }
@@ -499,13 +537,13 @@ function zshow() {
   $("zsum").textContent = locName(c0.l) + ", candles " + c0.c + " min before sunset, havdalah " + havText(c0);
   var diff = [], old = [];
   DEVS.forEach(function (d) {
-    var c = cfgOf(d); if (!c || d.dead) return;
-    if (!sameCfg(c, c0)) diff.push(d.name + " (" + locName(c.l) + ", " + c.c + " min, havdalah " + havText(c) + ")");
-    if (c.old) old.push(d.name);
+    var c = cfgOf(d); if (!c || d.dead || d.sub) return;
+    if (!sameCfg(c, c0)) diff.push((d.devName || d.name) + " (" + locName(c.l) + ", " + c.c + " min, havdalah " + havText(c) + ")");
+    if (c.old) old.push(d.devName || d.name);
   });
   var w = [];
   if (diff.length) w.push("Not the same on every device: " + diff.join("; ") + ". Save to make them match.");
-  if (old.length) w.push(old.join(", ") + (old.length > 1 ? " have" : " has") + " the older script (v8.2): London only, Hebcal's rounding instead of yours, no 8-minute rule and no 7.08° / 6°. Update to v8.3.");
+  if (old.length) w.push(old.join(", ") + (old.length > 1 ? " have" : " has") + " the older script (v8.2): London only, Hebcal's rounding instead of yours, no 8-minute rule and no 7.08° / 6°. Update to the latest script (v8.4).");
   $("zwarn").textContent = w.join(" ");
   $("zwarn").hidden = !w.length;
 }
@@ -520,18 +558,18 @@ function zsave() {
     .then(function (r) { return r.ok ? r.text() : ""; }, function () { return null; })
     .then(function (b) {
       if (b === "" || (b && b.indexOf("#zmanim v2") !== 0)) throw new Error("There's no times file for " + (L.name || L.id) + " on GitHub yet. If you've just added it, wait a minute and try again.");
-      var devs = DEVS.filter(function (d) { return d.core !== undefined && !d.dead; }), errs = [], ok = 0;
+      var devs = DEVS.filter(function (d) { return d.core !== undefined && !d.dead && !d.sub; }), errs = [], ok = 0;
       m.textContent = "Saving";
       return devs.reduce(function (p, d) {
         return p.then(function () {
           var cf = cfgOf(d);
-          if (cf && cf.old && L.id !== "london") { errs.push(d.name + ": needs script v8.3 for another location"); return; }
-          if (cf && cf.old && F.hm === 0 && F.g < 42 && F.g !== 0) { errs.push(d.name + ": needs script v8.3 for " + GEO[F.g]); return; }
+          if (cf && cf.old && L.id !== "london") { errs.push(d.name + ": needs the latest script (v8.4) for another location"); return; }
+          if (cf && cf.old && F.hm === 0 && F.g < 42 && F.g !== 0) { errs.push(d.name + ": needs the latest script (v8.4) for " + GEO[F.g]); return; }
           var q = cf && cf.old ? "&h=" + (F.hm === 1 ? F.rt : F.g)                 // v8.2: minutes after sunset, 0 = 8.5 deg
                                : "&hm=" + F.hm + "&g=" + F.g + "&rt=" + F.rt + "&l=" + encodeURIComponent(L.id);
           return core(d, "set=1&c=" + c + q + "&il=0&ps=1")
-            .then(function (s) { if (s.msg && !/^Saved/.test(s.msg)) errs.push(d.name + ": " + s.msg); else ok++; d.sum = s; },
-                  function (e) { errs.push(d.name + ": " + e.message); });
+            .then(function (s) { if (s.msg && !/^Saved/.test(s.msg)) errs.push((d.devName || d.name) + ": " + s.msg); else ok++; d.sum = s; },
+                  function (e) { errs.push((d.devName || d.name) + ": " + e.message); });
         });
       }, Promise.resolve()).then(function () {
         ZDIRTY = false;
@@ -779,7 +817,7 @@ function dayTitle(w) { var d = new Date(w * 1000); return DL[d.getUTCDay()] + " 
 // ------------------------------------------------------------------ device list editor
 var DE = null;
 function dlist() {
-  if (DE === null) DE = DEVS.map(function (d) {
+  if (DE === null) DE = DEVS.filter(main).map(function (d) {
     var nm = d.base ? (d.dname || "") : (DEVS[0].dname || "");
     return { ip: d.ip || "", oip: d.ip || "", mac: d.mac || "", name: nm, orig: nm, self: !d.base };
   });
