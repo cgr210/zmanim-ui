@@ -526,6 +526,7 @@ function zlocs() {                              // fill the Location list, keepi
     return '<option value="' + esc(L.id) + '">' + esc((L.name || L.id) + where + (L === NEWLOC ? ", not on GitHub yet" : "")) + "</option>";
   }).join("");
   $("zl").value = cur;
+  if ($("zdl")) $("zdl").innerHTML = LOCS.map(function (L) { return '<option value="' + esc(L.id) + '">' + esc((L.name || L.id) + " (" + L.id + ")") + "</option>"; }).join("");
 }
 function zfill(c) { $("zc").value = c.c; $("zhm").value = c.hm; $("zg").value = c.g; $("zrt").value = c.rt; zhv(); if (locById(c.l)) $("zl").value = c.l; else { zlocs(); $("zl").value = c.l; } }
 function zchanged() { ZDIRTY = true; $("zmsg").textContent = ""; if ($("zweek").open) wk(0); }
@@ -658,11 +659,42 @@ function zprep() {
       LOCS = list;
       var L = entry(list);
       $("zjson").value = locText(list.concat([L]));
+      $("zstep3").innerHTML = "Come back here. GitHub makes the times file in about a minute; this page checks, then selects the new location. Press <b>Save for all devices</b>.";
       $("zgh").href = "https://github.com/" + GH + "/edit/main/locations.json";
       $("zsteps").hidden = false; m.textContent = "";
       pending(L);
     })
     .catch(function (e) { m.textContent = "Couldn't get locations.json from GitHub (" + e.message + ")"; });
+}
+// ---- remove a location (demo page only, like adding). Refused while any device uses it.
+function zdel() {
+  var id = $("zdl").value, m = $("zdmsg"), L = locById(id), tok = tokGet();
+  if (!id || !L) return;
+  var users = DEVS.filter(function (d) { var c = cfgOf(d); return main(d) && !d.dead && c && c.l === id; })
+    .map(function (d) { return d.devName || d.name; });
+  if (users.length) { m.textContent = (L.name || id) + " is in use by " + users.join(", ") + ". Choose another location for all devices and save first."; return; }
+  if (LOCS.length < 2) { m.textContent = "This is the only location; add another one before removing it."; return; }
+  if (!confirm("Remove " + (L.name || id) + " from locations.json on GitHub?" + (window.SIM ? "\n\nThis changes the real list. Check that none of your real Shellys use this location: their times would stop updating." : ""))) return;
+  m.textContent = "Getting the current list from GitHub";
+  if (tok) {
+    gh("GET", "locations.json").then(function (f) {
+      var list = JSON.parse(b64dec(f.content)).filter(function (x) { return x.id !== id; });
+      if (!list.length) throw new Error("that would leave no locations");
+      return gh("PUT", "locations.json", { message: "Remove location " + (L.name || id), content: b64enc(locText(list)), sha: f.sha }).then(function () { return list; });
+    }).then(function (list) {
+      LOCS = list; zlocs(); $("zsteps").hidden = true;
+      m.textContent = "Removed " + (L.name || id) + " from locations.json. Its old times files stay in the times folder but are no longer updated.";
+    }).catch(function (e) { m.textContent = "Couldn't remove it: " + e.message; });
+    return;
+  }
+  fetchLocs().then(function (list) {
+    list = list.filter(function (x) { return x.id !== id; });
+    $("zjson").value = locText(list);
+    $("zgh").href = "https://github.com/" + GH + "/edit/main/locations.json";
+    $("zstep3").innerHTML = "Done: " + esc(L.name || id) + " disappears from the Location list within a few minutes (reload the page).";
+    $("zsteps").hidden = false; $("zpoll").textContent = "";
+    m.textContent = "Follow the steps under Add a location (Copy, then paste on GitHub) to remove it.";
+  }).catch(function (e) { m.textContent = "Couldn't get locations.json from GitHub (" + e.message + ")"; });
 }
 function zcopy() {
   var ta = $("zjson"), done = function () { $("zpoll").textContent = "Copied. Now open locations.json on GitHub (step 2)."; };
@@ -968,7 +1000,8 @@ document.getElementById("app").outerHTML =
     '<p class="hint">Rabbeinu Tam is never less than 8 minutes after the Geonim time. Sunset and candle lighting drop the seconds; havdalah up to 24 seconds past the minute uses that minute, otherwise the next.</p>' +
     '<p class="warn" id="zwarn" hidden></p>' +
     '<div class="row"><button class="primary" onclick="zsave()">Save for all devices</button></div><p class="note" id="zmsg" aria-live="polite"></p>' +
-    '<details class="sub" id="zadd"><summary>Add a location</summary>' +
+    '<details class="sub" id="zadd"><summary>Add or remove a location</summary>' +
+      '<h4>Add a location</h4>' +
       '<p class="hint">In Google Maps, right-click the spot (on a phone, press and hold). The numbers that appear are the coordinates; click them to copy.</p>' +
       '<label>Name<input id="zn" maxlength="40" placeholder="Site office"></label>' +
       '<label>Coordinates<input id="zco" placeholder="51.5484, 0.1716" inputmode="decimal"></label>' +
@@ -976,13 +1009,16 @@ document.getElementById("app").outerHTML =
       '<div id="zsteps" hidden><ol class="steps">' +
         '<li>Copy the updated list of locations.<textarea id="zjson" rows="4" readonly aria-label="Updated locations.json"></textarea><div class="row"><button onclick="zcopy()">Copy</button></div></li>' +
         '<li><a id="zgh" target="_blank" rel="noopener">Open locations.json on GitHub</a>, select everything in it, paste, and press <b>Commit changes</b>.</li>' +
-        '<li>Come back here. GitHub makes the times file in about a minute; this page checks, then selects the new location. Press <b>Save for all devices</b>.</li>' +
+        '<li id="zstep3">Come back here. GitHub makes the times file in about a minute; this page checks, then selects the new location. Press <b>Save for all devices</b>.</li>' +
       '</ol></div><p class="note" id="zpoll" aria-live="polite"></p>' +
-      '<div class="tok"><h4>Add locations automatically</h4>' +
-        '<div id="ztok-new"><p class="hint">With a GitHub token this page commits the new location itself; without one you paste it on GitHub by hand. The token is kept only in this browser.</p>' +
+      '<div class="zrem"><h4>Remove a location</h4>' +
+        '<label>Location<select id="zdl"></select></label>' +
+        '<div class="row"><button onclick="zdel()">Remove location</button></div><p class="note" id="zdmsg" aria-live="polite"></p></div>' +
+      '<div class="tok"><h4>Change locations automatically</h4>' +
+        '<div id="ztok-new"><p class="hint">With a GitHub token this page changes locations.json on GitHub itself; without one you paste the new list on GitHub by hand. The token is kept only in this browser.</p>' +
           '<label>GitHub token<input type="password" id="ztok" autocomplete="off" spellcheck="false" placeholder="github_pat_..."></label>' +
           '<div class="row"><button onclick="tokSave()">Save token</button></div></div>' +
-        '<div id="ztok-set" hidden><p class="hint">This browser has a GitHub token, so new locations are committed automatically.</p><div class="row"><button onclick="tokForget()">Forget token</button></div></div>' +
+        '<div id="ztok-set" hidden><p class="hint">This browser has a GitHub token, so location changes are committed automatically.</p><div class="row"><button onclick="tokForget()">Forget token</button></div></div>' +
         '<p class="note" id="ztmsg" aria-live="polite"></p></div>' +
     '</details>' +
   '</details>' +

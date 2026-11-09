@@ -187,3 +187,5 @@ input[type=number] { width: 84px; }
 .dfind { margin-top: 8px; }
 .df-name { flex: 1; display: flex; flex-direction: column; }
 .df-name small { color: var(--muted); font-size: 14px; }
+.zrem, #zadd > h4 { margin-top: 12px; }
+#zadd h4, .zrem h4 { font-size: 16px; margin: 12px 0 4px; }
