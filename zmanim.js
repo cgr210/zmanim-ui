@@ -305,7 +305,7 @@ function pick(i) {
   var d = DEVS[i];
   if (d.core === undefined) return;
   SEL = SEL === d ? null : d;
-  ED = null; msg("");
+  ED = null; msg(""); if ($("cpbox")) cpclose();
   if (SEL) sreset();
   cards(); details();
   if (SEL) { $("detail").scrollIntoView({ behavior: "smooth", block: "start" }); refreshDev(d, true); }
@@ -354,6 +354,7 @@ function slist() {
         (j.fx ? "" : '<button onclick="sktog(' + i + ')">' + (skip ? "Run on Shabbos" : "Skip Shabbos") + "</button>") +
         '<button onclick="sen(' + i + ')">' + (j.en || p ? "Disable" : "Enable") + "</button>" +
         (j.fx ? '<button onclick="sedit(' + i + ')">Edit</button>' : "") +
+        (j.fx ? '<button onclick="cpopen(\'j\',' + i + ')">Copy</button>' : "") +
         '<button onclick="sdel(' + i + ')">Delete</button></div></li>';
   });
   (d.rj || []).forEach(function (r, i) {
@@ -362,9 +363,73 @@ function slist() {
         '<span class="sch-what ' + (r[2] ? "on" : "off") + '">' + (r[2] ? "On" : "Off") + "</span>" +
         (r[3] ? '<span class="sch-days">' + FL[r[3]] + "</span>" : '<span class="sch-days">Every time</span>') + "</div>" +
       '<div class="sch-ctl"><button onclick="ren(' + i + ')">' + (r[4] ? "Disable" : "Enable") + '</button>' +
-        '<button onclick="redit(' + i + ')">Edit</button><button onclick="rdel(' + i + ')">Delete</button></div></li>';
+        '<button onclick="redit(' + i + ')">Edit</button><button onclick="cpopen(\'r\',' + i + ')">Copy</button><button onclick="rdel(' + i + ')">Delete</button></div></li>';
   });
   $("sl").innerHTML = h || '<li class="empty">No schedules yet. Add one below.</li>';
+  $("cpall").hidden = !((d.sj || []).some(function (j) { return j.fx; }) || (d.rj || []).length);
+}
+
+// ---- copy schedules to another device or output
+var CP = null;                                    // { d: source, items: [{j}|{r}], label }
+function cptargets(src) { return DEVS.filter(function (x) { return x !== src && x.core !== undefined && !x.dead; }); }
+function cpopen(kind, i) {
+  var d = SEL, items = [], label;
+  if (kind === "all") {
+    (d.sj || []).forEach(function (j) { if (j.fx) items.push({ j: j }); });
+    (d.rj || []).forEach(function (r) { items.push({ r: r }); });
+    label = "all " + items.length + " schedules";
+  } else if (kind === "j") { var j = d.sj[i]; items.push({ j: j }); label = "the " + j.t + " " + (j.a ? "On" : "Off") + " schedule (" + dtxt(j.d) + ")"; }
+  else { var r = d.rj[i]; items.push({ r: r }); label = "the " + rtxt(r) + " " + (r[2] ? "On" : "Off") + " schedule"; }
+  var ts = cptargets(d);
+  if (!ts.length) { msg("There's no other device or output to copy to."); return; }
+  CP = { d: d, items: items };
+  $("cplabel").textContent = "Copy " + label + " to";
+  $("cpto").innerHTML = '<option value="*">All other devices and outputs</option>' + ts.map(function (x) { return '<option value="' + DEVS.indexOf(x) + '">' + esc(x.name) + "</option>"; }).join("");
+  $("cpbox").hidden = false; msg("");
+  $("cpbox").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function cpclose() { CP = null; $("cpbox").hidden = true; }
+function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function cpgo() {
+  if (!CP) return;
+  var v = $("cpto").value, src = CP.d, items = CP.items;
+  var ts = v === "*" ? cptargets(src) : [DEVS[+v]];
+  var done = [], skipped = [], errs = [];
+  msg("Copying");
+  ts.reduce(function (p, t) {
+    return p.then(function () {
+      // fresh copy of the target's schedules first, so nothing on it is overwritten or doubled
+      return loadSchedules(t).then(function () {
+        var rj = (t.rj || []).slice(), newR = 0, q = Promise.resolve();
+        items.forEach(function (it) {
+          if (it.r) {
+            if (rj.some(function (x) { return same(x.slice(0, 4), it.r.slice(0, 4)); })) { skipped.push(t.name); return; }
+            rj.push(it.r.slice()); newR++;
+            return;
+          }
+          var j = it.j;
+          if ((t.sj || []).some(function (x) { return x.fx && x.ts === j.ts && x.a === j.a; })) { skipped.push(t.name); return; }
+          q = q.then(function () {
+            return rpcAt(t.base, "Schedule.Create", { enable: j.en, timespec: j.ts, calls: [{ method: "Switch.Set", params: { id: t.sw, on: j.a } }] })
+              .then(function (c) { done.push(t.name); if (src.sk.indexOf(j.id) >= 0) return skset(t, c.id, true); });
+          });
+        });
+        if (newR) q = q.then(function () {
+          var val = JSON.stringify(rj);
+          if (val.length > 250) throw new Error("too many zman schedules for its storage");
+          return rpcAt(t.base, "KVS.Set", { key: rkey(t), value: val }).then(function () { done.push(t.name); return core(t, "cmd=refresh"); });
+        });
+        return q;
+      }).catch(function (e) { errs.push(t.name + ": " + e.message); })
+        .then(function () { return refreshDev(t, true); });
+    });
+  }, Promise.resolve()).then(function () {
+    function uniq(a) { return a.filter(function (x, i) { return a.indexOf(x) === i; }); }
+    cpclose();
+    msg((done.length ? "Copied to " + uniq(done).join(", ") + "." : "Nothing copied.") +
+      (skipped.length ? " Already there on " + uniq(skipped).join(", ") + "." : "") +
+      (errs.length ? " Failed: " + errs.join("; ") : ""));
+  });
 }
 function msg(t) { $("smsg").textContent = t || ""; }
 function after(p) {                              // run a change, then reload this device's schedules and status
@@ -978,7 +1043,9 @@ document.getElementById("app").outerHTML =
       '<div class="panel"><h3>Coming up</h3><ul id="up" class="evs"></ul></div>' +
       '<div class="panel"><div class="ph"><h3>Recent switching</h3><button class="ph-btn" onclick="hclear()">Clear</button></div><ul id="hist" class="evs"></ul></div>' +
     '</div>' +
-    '<div class="panel"><h3>Schedules</h3><ul id="sl" class="schs"></ul>' +
+    '<div class="panel"><div class="ph"><h3>Schedules</h3><button class="ph-btn" id="cpall" onclick="cpopen(\'all\')">Copy all to…</button></div><ul id="sl" class="schs"></ul>' +
+      '<div class="cpbox" id="cpbox" hidden><span id="cplabel"></span><select id="cpto" aria-label="Copy to"></select>' +
+        '<div class="row"><button class="primary" onclick="cpgo()">Copy</button><button onclick="cpclose()">Cancel</button></div></div>' +
       '<div class="form" id="sform"><h4 id="sft">Add a schedule</h4>' +
         '<label>When<select id="stg" onchange="sform()"><option value="0">At a fixed time</option><option value="1">At candle lighting</option><option value="2">At havdalah</option></select></label>' +
         '<div id="fx"><label>Time<input type="time" id="stm" value="07:00"></label><div class="days" id="days" role="group" aria-label="Days"></div>' +

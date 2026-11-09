@@ -189,3 +189,6 @@ input[type=number] { width: 84px; }
 .df-name small { color: var(--muted); font-size: 14px; }
 .zrem, #zadd > h4 { margin-top: 12px; }
 #zadd h4, .zrem h4 { font-size: 16px; margin: 12px 0 4px; }
+.cpbox { margin-top: 12px; padding: 12px; border: 1.5px solid var(--sky-low); border-radius: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.cpbox select { flex: 1 1 220px; }
+.cpbox .row { margin-top: 0; width: 100%; }
