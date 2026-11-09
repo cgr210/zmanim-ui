@@ -26,7 +26,7 @@ var CORE = 3, SW = 0, NM = "Shower Lights", PEERS = [];
     <button onclick="SIM.nextZman()">To next zman</button>
     <button onclick="SIM.wall()" title="Flips Shower Lights as if someone used the wall switch">Wall switch</button>
     <button onclick="SIM.reset()">Reset demo</button>
-    <span class="sim-note" id="simNote">Three pretend devices (a Mini, a Pro 1 and a 4-relay Pro 4PM) run the real zmanim script with the real times file. Changes are kept in this browser until you press Reset demo.</span>
+    <span class="sim-note" id="simNote">Pretend devices (a Mini, a Pro 1 and a 4-relay Pro 4PM on the page, plus two more to find with Find devices) run the real zmanim script with the real times file. Changes are kept in this browser until you press Reset demo.</span>
   </div>
 </div>
 <main id="app">Loading the simulated devices</main>
@@ -38,7 +38,7 @@ let CFG={loc:"london",switchId:0,restoreOnBoot:true,refreshHrs:6,gh:"cgr210/zman
 /* Simulator: two pretend Shellys running the real core script in the browser.
    The page code (zmanim.js) talks to "/rpc" exactly as on a real Shelly; fetch() is intercepted here. */
 var SIM = (function () {
-  var STORE = "zmanim-demo-v2", TIMES = "https://raw.githubusercontent.com/cgr210/zmanim-ui/main/times/london.csv";
+  var STORE = "zmanim-demo-v3", TIMES = "https://raw.githubusercontent.com/cgr210/zmanim-ui/main/times/london.csv";
   var DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
   var shift = 0, busy = false, saveT = null;
   var yieldCh = new MessageChannel(), waiting = [];
@@ -74,13 +74,16 @@ var SIM = (function () {
         { id: 1, enable: true, timespec: "0 0 6 * * *", calls: [{ method: "Switch.Set", params: { id: 0, on: true } }] },
         { id: 2, enable: true, timespec: "0 0 18 * * *", calls: [{ method: "Switch.Set", params: { id: 2, on: true } }] },
         { id: 3, enable: true, timespec: "0 30 23 * * *", calls: [{ method: "Switch.Set", params: { id: 2, on: false } }] }] }
+  ,
+    { ip: "192.168.1.60", mac: "D48AFC1E2B90", id: "shelly1g4-d48afc1e2b90", name: "Kitchen Urn", out: false, kv: {}, jobs: [] },
+    { ip: "192.168.1.61", mac: "8813BF4C0A12", id: "shellyplugsg3-8813bf4c0a12", name: "Porch Light", out: false, kv: {}, jobs: [], noscript: true }
   ];
   var saved = load();
   if (saved) shift = saved.shift || 0;
 
   var devs = defaults.map(function (def, i) {
     var st = saved && saved.devs && saved.devs[i];
-    var d = { ip: def.ip, mac: def.mac, id: def.id, name: st ? st.name : def.name,
+    var d = { ip: def.ip, mac: def.mac, id: def.id, noscript: !!def.noscript, name: st ? st.name : def.name,
       kv: st ? st.kv : JSON.parse(JSON.stringify(def.kv)), jobs: st ? st.jobs : JSON.parse(JSON.stringify(def.jobs)),
       outs: st && st.outs ? st.outs : (def.outs || [def.out]).slice(), chn: (st && st.chn) || def.chn || [""], handlers: [], timers: [], ev: null };
     boot(d, !!st);
@@ -159,9 +162,9 @@ var SIM = (function () {
         ["enable", "timespec", "calls"].forEach(function (k) { if (k in p) j[k] = p[k]; }); save(); return { rev: 1 };
       }
       case "Schedule.Delete": d.jobs = d.jobs.filter(function (x) { return x.id !== p.id; }); save(); return { rev: 1 };
-      case "Script.List": return { scripts: [{ id: 1, name: "other", enable: false, running: false }, { id: 3, name: "Zmanim core", enable: true, running: true }] };
+      case "Script.List": if (d.noscript) return { scripts: [] }; return { scripts: [{ id: 1, name: "other", enable: false, running: false }, { id: 3, name: "Zmanim core", enable: true, running: true }] };
       case "Script.Eval":
-        if (p.id !== 3) err(-105, "Script not running");
+        if (p.id !== 3 || d.noscript) err(-105, "Script not running");
         var r = d.ev(p.code);
         return { result: r === undefined ? "undefined" : r };
       case "HTTP.Request": {

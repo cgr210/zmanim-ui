@@ -598,6 +598,7 @@ function tokSave() {
 }
 function tokForget() { try { localStorage.removeItem(TOKKEY); } catch (e) { } tokShow(); $("ztmsg").textContent = "Forgotten in this browser."; }
 function tokShow() {
+  if (!$("zgo")) return;                         // Add a location isn't on this page
   var t = tokGet();
   $("ztok-set").hidden = !t; $("ztok-new").hidden = !!t;
   $("zgo").textContent = t ? "Add location" : "Next";
@@ -835,8 +836,77 @@ function dlist() {
 }
 function dadd() { if (DE === null) dlist(); DE.push({ ip: "", oip: "", mac: "", name: "", orig: "", self: false }); dlist(); }
 function ddel(i) { DE.splice(i, 1); dlist(); }
+
+// ---- find devices: scan this network for Shellys running the zmanim script
+var FIND = null;                                 // { run, list: [{ip, mac, name, model, zm}] }
+function dfind() {
+  if (FIND && FIND.run) { FIND.run = false; return; }   // second press stops the scan
+  if (DE === null) dlist();
+  var known = {};
+  DE.forEach(function (e) { if (e.ip) known[e.ip] = 1; if (e.mac) known[e.mac.toLowerCase()] = 1; });
+  DEVS.forEach(function (d) { if (d.mac) known[d.mac.toLowerCase()] = 1; });
+  FIND = { run: true, list: [], done: 0, total: 0 };
+  $("dfbtn").textContent = "Stop search"; frender("Finding this device's network");
+  myIp().then(function (me) {
+    if (!me) throw new Error("couldn't find this device's own IP address");
+    var pre = me.split(".").slice(0, 3).join("."), mine = +me.split(".")[3], list = [], next = 0;
+    for (var n = 1; n < 255; n++) if (n !== mine && !known[pre + "." + n]) list.push(pre + "." + n);
+    FIND.total = list.length;
+    function ask(ip, method, params) {             // RPC to another device, relayed through this Shelly
+      return rpcLocal("HTTP.Request", { method: "POST", url: "http://" + ip + "/rpc", timeout: 2,
+          body: JSON.stringify({ id: 1, method: method, params: params || {} }) })
+        .then(function (r) { var j = JSON.parse(r.body); if (j.error) throw new Error(j.error.message); return j.result; });
+    }
+    function check(ip) {                           // a Shelly? running the zmanim script?
+      return ask(ip, "Shelly.GetDeviceInfo").then(function (i) {
+        if (!i || !i.mac) return;
+        var mac = String(i.mac).toLowerCase();
+        if (known[mac]) return;
+        var dev = { ip: ip, mac: mac, name: i.name || "", id: i.id || "", model: i.model || i.app || "", zm: false };
+        return ask(ip, "Script.List").then(function (r) {
+          var run = (r.scripts || []).filter(function (x) { return x.running; });
+          return run.reduce(function (p, x) {
+            return p.then(function () {
+              if (dev.zm) return;
+              return ask(ip, "Script.Eval", { id: x.id, code: "typeof webCmd" }).then(function (t) { if (t && t.result === "function") dev.zm = true; }).catch(function () {});
+            });
+          }, Promise.resolve());
+        }).catch(function () {}).then(function () { FIND.list.push(dev); });
+      }).catch(function () {});
+    }
+    function worker() {
+      if (!FIND.run || next >= list.length) return Promise.resolve();
+      var ip = list[next++];
+      return check(ip).then(function () { FIND.done++; frender(); return worker(); });
+    }
+    return Promise.all([worker(), worker(), worker(), worker()]);
+  }).then(function () {
+    var stopped = !FIND.run; FIND.run = false;
+    frender(stopped ? "Search stopped." : "Search finished.");
+  }).catch(function (e) { FIND.run = false; frender("Search failed: " + e.message); });
+}
+function frender(msg) {
+  var F = FIND; if (!F) return;
+  $("dfbtn").textContent = F.run ? "Stop search" : "Find devices";
+  var zm = F.list.filter(function (x) { return x.zm; }), other = F.list.filter(function (x) { return !x.zm; });
+  var h = '<p class="note">' + esc(msg || (F.run ? "Searching " + F.done + " of " + F.total + " addresses" : "")) + "</p>";
+  if (zm.length) h += '<ul class="dvl">' + zm.map(function (x) {
+    var i = F.list.indexOf(x);
+    return '<li class="dv"><span class="df-name">' + esc(x.name || x.id || x.ip) + '<small>' + esc(x.ip + (x.model ? ", " + x.model : "")) + '</small></span><button onclick="dfadd(' + i + ')"' + (x.added ? " disabled" : "") + ">" + (x.added ? "Added" : "Add") + "</button></li>";
+  }).join("") + "</ul>";
+  else if (!F.run) h += '<p class="hint">No new devices with the zmanim script found.</p>';
+  if (other.length) h += '<p class="hint">Also found, without the zmanim script: ' + other.map(function (x) { return esc((x.name || x.id) + " (" + x.ip + ")"); }).join(", ") + ". Install the script on them to add them.</p>";
+  $("dfind").innerHTML = h;
+}
+function dfadd(i) {
+  var x = FIND.list[i]; if (!x || x.added) return;
+  x.added = true;
+  DE.push({ ip: x.ip, oip: x.ip, mac: x.mac, name: x.name, orig: x.name, self: false, chs: [] });
+  dlist(); frender(); $("dmsg").textContent = "Added " + (x.name || x.ip) + ". Press Save devices to keep it.";
+}
 function dsave() {
   var ips = [], bad = null;
+  DE = DE.filter(function (e) { return e.self || e.ip || e.name; });        // an empty new row is just ignored
   DE.forEach(function (e) { if (e.self) return; if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(e.ip)) bad = e.ip || "(empty)"; else ips.push(e.ip + (e.mac && e.ip === e.oip ? "#" + e.mac : "")); });
   if (bad) { $("dmsg").textContent = "Not a valid IP address: " + bad; return; }
   if (DE.some(function (e) { return e.name.length > 40 || (e.chs || []).some(function (c) { return c.name.length > 40; }); })) { $("dmsg").textContent = "Names can be up to 40 characters"; return; }
@@ -924,7 +994,8 @@ document.getElementById("app").outerHTML =
   '<details class="manage" id="manage" ontoggle="if(this.open){DE=null;dlist();}"><summary>Manage devices</summary>' +
     '<p class="hint">The devices shown on this page. Names are saved on each device; a device with several outputs (Pro 4PM) also lists its outputs to name.</p>' +
     '<ul id="dvl" class="dvl"></ul>' +
-    '<div class="row"><button onclick="dadd()">Add device</button><button class="primary" onclick="dsave()">Save devices</button></div>' +
+    '<div class="row"><button onclick="dadd()">Add device</button><button id="dfbtn" onclick="dfind()">Find devices</button><button class="primary" onclick="dsave()">Save devices</button></div>' +
+    '<div id="dfind" class="dfind" aria-live="polite"></div>' +
     '<p class="note" id="dmsg" aria-live="polite"></p></details>' +
 '</main>';
 (function () {
@@ -937,6 +1008,8 @@ document.title = "Zmanim";
 cards();
 setTZ((function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return null; } })());   // until the device says
 rpcLocal("Sys.GetConfig").then(function (c) { if (c && c.location && c.location.tz) { setTZ(c.location.tz); DEVS.forEach(function (d) { if (d.sum) render(d); }); } }).catch(function () {});
+// Adding locations is only offered on the demo page; on the devices the Location list just shows what's on GitHub.
+if (!window.SIM && $("zadd")) $("zadd").parentNode.removeChild($("zadd"));
 zlocs(); loadLocs(); tokShow();
 rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; cards(); }).catch(function () {})
   .then(function () { return refreshDev(DEVS[0], true); })
