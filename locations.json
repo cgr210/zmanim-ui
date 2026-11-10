@@ -1,4 +1,5 @@
 [
   { "id": "london", "lat": 51.50853, "lon": -0.12574, "tz": "Europe/London", "name": "London" },
-  { "id": "london_precise", "lat": 51.6, "lon": 0.1, "tz": "Europe/London", "name": "london_precise" }
+  { "id": "london_precise", "lat": 51.6, "lon": 0.1, "tz": "Europe/London", "name": "london_precise" },
+  { "id": "new-london-test", "lat": 51.5675, "lon": 0.07207, "tz": "Europe/London", "name": "new london test" }
 ]
