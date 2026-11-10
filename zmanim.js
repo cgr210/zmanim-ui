@@ -594,7 +594,7 @@ function zlocs() {                              // fill the Location list, keepi
   if ($("zdl")) $("zdl").innerHTML = LOCS.map(function (L) { return '<option value="' + esc(L.id) + '">' + esc((L.name || L.id) + " (" + L.id + ")") + "</option>"; }).join("");
 }
 function zfill(c) { $("zc").value = c.c; $("zhm").value = c.hm; $("zg").value = c.g; $("zrt").value = c.rt; zhv(); if (locById(c.l)) $("zl").value = c.l; else { zlocs(); $("zl").value = c.l; } }
-function zchanged() { ZDIRTY = true; $("zmsg").textContent = ""; if ($("zweek").open) wk(0); }
+function zchanged() { ZDIRTY = true; $("zmsg").textContent = ""; if ($("zweek").open) wk(0); if ($("zdayf") && $("zdayf").open) zday(); }
 
 // summary line + warnings; called whenever a device's status comes in
 function zshow() {
@@ -911,6 +911,67 @@ function wk(n) {
     out.innerHTML = html;
   }).catch(function (e) { out.innerHTML = '<p class="empty">' + esc(e.message) + "</p>"; });
 }
+// ------------------------------------------------------------------ zmanim for one day (demo page only)
+// Rounding: sunset and candle lighting drop the seconds, havdalah uses the 24-second rule (as on the Shellys).
+// The other zmanim are rounded the cautious way: deadlines down, earliest times up.
+function zdayShift(n) {
+  var v = $("zdd").value || new Date().toISOString().slice(0, 10), p = v.split("-");
+  $("zdd").value = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n)).toISOString().slice(0, 10);
+  zday();
+}
+function zday() {
+  var out = $("zdo"), L = zloc(), F = zform();
+  if (!$("zdd").value) { var t0 = Math.floor(Date.now() / 1000); $("zdd").value = new Date((t0 + tzOff(t0, L.tz)) * 1000).toISOString().slice(0, 10); }
+  var p = $("zdd").value.split("-"), y = +p[0], mo = +p[1], dd = +p[2];
+  out.innerHTML = '<p class="empty">Working it out</p>';
+  hebcalLib().then(function (hc) {
+    var date = new Date(y, mo - 1, dd), loc = new hc.Location(L.lat, L.lon, false, L.tz, L.name || L.id, "XX");
+    var z = new hc.Zmanim(loc, date, false), hd = new hc.HDate(date), wd = date.getDay();
+    function sec(x) { return x instanceof Date && !isNaN(x.getTime()) ? Math.floor(x.getTime() / 1000) : 0; }
+    function down(t) { return t - t % 60; }
+    function up(t) { return t % 60 ? t - t % 60 + 60 : t; }
+    // what kind of day: Shabbos, Yom Tov, holidays, fasts, Rosh Chodesh ...
+    var hol = (hc.HebrewCalendar.getHolidaysOnDate(hd, false) || []).filter(function (e) { return !(e.getFlags() & hc.flags.DAF_YOMI); });
+    var chag = hol.some(function (e) { return e.getFlags() & hc.flags.CHAG; });
+    var parsha = "";
+    try { var sd = hc.getSedra(hd.getFullYear(), false).lookup(wd === 6 ? hd : hd.onOrAfter(6)); if (sd && sd.parsha && !sd.chag) parsha = sd.parsha.map(function (n) { return hc.Locale.gettext(n, "ashkenazi"); }).join("-"); } catch (e) { }
+    var tags = [];
+    if (wd === 6) tags.push({ k: "holy", t: "Shabbos" + (parsha ? ", Parshas " + parsha : "") });
+    if (chag) tags.push({ k: "holy", t: "Yom Tov" });
+    if (wd === 5 && !chag) tags.push({ k: "erev", t: "Erev Shabbos" });
+    hol.forEach(function (e) { var g = e.getFlags(); tags.push({ k: g & hc.flags.CHAG ? "holy" : g & (hc.flags.EREV | hc.flags.MINOR_FAST | hc.flags.MAJOR_FAST) ? "erev" : "info", t: e.render("ashkenazi") }); });
+    if (!tags.length) tags.push({ k: "info", t: "Weekday" + (parsha ? " (this week: Parshas " + parsha + ")" : "") });
+    // the day's zmanim
+    var rows = [
+      ["Dawn (Alos HaShachar)", up(sec(z.alotHaShachar()))],
+      ["Earliest tallis and tefillin (Misheyakir)", up(sec(z.misheyakir()))],
+      ["Sunrise", up(sec(z.sunrise()))],
+      ["Latest Shema (Magen Avraham)", down(sec(z.sofZmanShmaMGA()))],
+      ["Latest Shema (Gra)", down(sec(z.sofZmanShma()))],
+      ["Latest Shacharis (Magen Avraham)", down(sec(z.sofZmanTfillaMGA()))],
+      ["Latest Shacharis (Gra)", down(sec(z.sofZmanTfilla()))],
+      ["Midday (Chatzos)", down(sec(z.chatzot()))],
+      ["Earliest Mincha (Mincha Gedola)", up(sec(z.minchaGedola()))],
+      ["Mincha Ketana", up(sec(z.minchaKetana()))],
+      ["Plag HaMincha", up(sec(z.plagHaMincha()))],
+      ["Sunset (Shkiah)", down(sec(z.sunset()))]
+    ];
+    // candle lighting / havdalah that evening, with your settings (same rows the GitHub job writes)
+    var ev = zrows(hc, L, date, date).filter(function (r) { return r.date === ymdL(date); });
+    ev.forEach(function (r) {
+      if (r.type === 1 && r.mode === 0) rows.push(["Candle lighting (" + F.c + " min before sunset)", r.sunset - r.sunset % 60 - F.c * 60, "zm"]);
+      else { var hv = havCalc(r, F); if (hv.t) rows.push([(r.type === 2 ? "Havdalah" : "Yom Tov night (no candle lighting time)") + (F.hm === 1 ? ", Rabbeinu Tam" : ", Geonim"), hv.t, "zm"]); }
+    });
+    var tg = sec(z.tzeit(8.5)); if (tg) rows.push(["Nightfall (Tzeis, 8.5\u00b0)", r24(tg)]);
+    rows.sort(function (a, b) { return a[1] - b[1]; });
+    out.innerHTML = '<p class="wk-head">' + esc(DL[wd] + " " + dd + " " + ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][mo - 1] + " " + y + ", " + hd.render("en")) + ", " + esc(L.name || L.id) + "</p>" +
+      '<div class="zd-tags">' + tags.map(function (x) { return '<span class="zd-tag ' + x.k + '">' + esc(x.t) + "</span>"; }).join("") + "</div>" +
+      '<ul class="evs zd-list">' + rows.filter(function (r) { return r[1]; }).map(function (r) {
+        return '<li class="ev' + (r[2] ? "" : " info") + '"><span class="ev-when"><b>' + hmIn(r[1], L.tz) + '</b></span><span class="ev-why">' + esc(r[0]) + "</span></li>";
+      }).join("") + "</ul>" +
+      '<p class="hint">Sunset and candle lighting drop the seconds; havdalah uses your 24-second rule. Other times are rounded the cautious way: deadlines down, earliest times up.</p>';
+  }).catch(function (e) { out.innerHTML = '<p class="empty">' + esc(e.message) + "</p>"; });
+}
 function dayTitle(w) { var d = new Date(w * 1000); return DL[d.getUTCDay()] + " " + d.getUTCDate() + " " + ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][d.getUTCMonth()]; }
 
 // ------------------------------------------------------------------ device list editor
@@ -1089,6 +1150,11 @@ document.getElementById("app").outerHTML =
         '<p class="note" id="ztmsg" aria-live="polite"></p></div>' +
     '</details>' +
   '</details>' +
+  '<details class="manage fold" id="zdayf" ontoggle="if(this.open)zday()"><summary>Zmanim for a day</summary>' +
+    '<p class="hint">All the zmanim for one date, and whether it\'s Shabbos or a Yom Tov, with the settings above.</p>' +
+    '<div class="wk-bar"><button onclick="zdayShift(-1)">&minus; day</button><input type="date" id="zdd" onchange="zday()" aria-label="Date"><button onclick="zdayShift(1)">+ day</button><button onclick="$(\'zdd\').value=\'\';zday()">Today</button></div>' +
+    '<div id="zdo" aria-live="polite"></div>' +
+  '</details>' +
   '<details class="manage fold" id="zweek" ontoggle="if(this.open)wk(0)"><summary>Check a week</summary>' +
     '<p class="hint">The zmanim for any week with the settings above, saved or not, and what each device will do.</p>' +
     '<div class="wk-bar"><button onclick="wk(-7)">&minus; week</button><input type="date" id="zwd" onchange="wk(0)" aria-label="Date in the week"><button onclick="wk(7)">+ week</button><button onclick="wkToday()">This week</button></div>' +
@@ -1113,6 +1179,7 @@ setTZ((function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZo
 rpcLocal("Sys.GetConfig").then(function (c) { if (c && c.location && c.location.tz) { setTZ(c.location.tz); DEVS.forEach(function (d) { if (d.sum) render(d); }); } }).catch(function () {});
 // Adding locations is only offered on the demo page; on the devices the Location list just shows what's on GitHub.
 if (!window.SIM && $("zadd")) $("zadd").parentNode.removeChild($("zadd"));
+if (!window.SIM && $("zdayf")) $("zdayf").parentNode.removeChild($("zdayf"));     // Zmanim for a day: demo page only
 zlocs(); loadLocs(); tokShow();
 rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; cards(); }).catch(function () {})
   .then(function () { return refreshDev(DEVS[0], true); })
