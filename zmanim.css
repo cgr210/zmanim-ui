@@ -197,3 +197,7 @@ input[type=number] { width: 84px; }
 .zd-tag.holy { background: var(--sky-low); border-color: var(--sky-low); color: #fff; font-weight: 700; }
 .zd-tag.erev { border-color: var(--flame); color: var(--text); }
 .zd-list .ev { grid-template-columns: 3.6em minmax(0, 1fr); }
+.ifm { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; }
+.ifm h5 { margin: 0 0 8px; font-size: 15px; }
+.ifm .pair { flex-wrap: wrap; justify-content: flex-end; }
+#ipanel h3 { margin-top: 0; }

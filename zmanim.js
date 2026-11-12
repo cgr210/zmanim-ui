@@ -172,13 +172,18 @@ function parseSpec(ts) {                       // "0 30 7 * * MON,WED" -> {t:"07
   return { t: p2(+p[2]) + ":" + p2(+p[1]), d: d };
 }
 function dayIdx(s) { var i = SD.indexOf(String(s).toUpperCase()); if (i >= 0) return i; var n = parseInt(s, 10); return n >= 0 && n <= 7 && String(n) === s ? n % 7 : -1; }
+function jobIa(j) {                             // press rule carried by a schedule (2nd call), or null
+  var c = j.calls && j.calls[1];
+  return c && c.method && c.method.toLowerCase() === "kvs.set" && c.params && /^zmanim_ia/.test(c.params.key || "") ? String(c.params.value || "") : null;
+}
 function jobAction(j) {
-  if (!j.calls || j.calls.length !== 1) return null;
+  if (!j.calls || !(j.calls.length === 1 || (j.calls.length === 2 && jobIa(j) !== null))) return null;
   var c = j.calls[0];
   if (!c.method || c.method.toLowerCase() !== "switch.set" || !c.params) return null;
   return c.params.on === true ? true : (c.params.on === false ? false : null);
 }
 function rkey(d) { return d.sub ? "zmanim_rules_" + d.sw : "zmanim_rules"; }   // zman schedules: one list per relay
+function ikey(d, b) { return d.sub ? b + "_" + d.sw : b; }   // input: zmanim_in (settings) / zmanim_ia (what a press does now)
 function loadSchedules(d) {                    // one request at a time: the main Shelly relays requests for the others
   return rpcAt(d.base, "Schedule.List").then(function (r) {
     d.sj = (r.jobs || []).filter(function (j) {
@@ -186,11 +191,12 @@ function loadSchedules(d) {                    // one request at a time: the mai
       return id === null ? !d.sub : (id === d.sw || (!d.multi && !d.sub));
     }).map(function (j) {
       var ps = parseSpec(j.timespec || ""), a = jobAction(j), m = j.calls && j.calls[0] && j.calls[0].method;
-      return { id: j.id, en: !!j.enable, t: ps && ps.t, d: ps && ps.d, a: a, ts: j.timespec, fx: !!(ps && a !== null), m: m };
+      return { id: j.id, en: !!j.enable, t: ps && ps.t, d: ps && ps.d, a: a, ts: j.timespec, fx: !!(ps && a !== null), m: m, ia: jobIa(j) };
     });
   })
     .then(function () { return rpcAt(d.base, "KVS.Get", { key: "zmanim_skip" }).then(function (r) { d.sk = JSON.parse(r.value); }).catch(function () { d.sk = []; }); })
-    .then(function () { return rpcAt(d.base, "KVS.Get", { key: rkey(d) }).then(function (r) { d.rj = JSON.parse(r.value); }).catch(function () { d.rj = []; }); });
+    .then(function () { return rpcAt(d.base, "KVS.Get", { key: rkey(d) }).then(function (r) { d.rj = JSON.parse(r.value); }).catch(function () { d.rj = []; }); })
+    .then(function () { return rpcAt(d.base, "KVS.Get", { key: ikey(d, "zmanim_in") }).then(function (r) { d.inp = String(r.value); }).catch(function () { d.inp = ""; }); });
 }
 function refreshDev(d, withSchedules) {
   if (d.core === undefined) return Promise.resolve();
@@ -332,7 +338,7 @@ function details() {
     var p = typeof e[3] === "number" ? [dmy(e[3], s.off), hm(e[3], s.off)] : String(e[0]).split(/ (?=\d\d:)/);   // v8.2 sends "Fri 09/10 18:25" only
     return '<li class="ev"><span class="ev-when">' + esc(p[0]) + "<b>" + esc(p[1] || "") + '</b></span><span class="ev-act ' + (e[1] ? "on" : "off") + '">' + (e[1] ? "On" : "Off") + '</span><span class="ev-why">' + esc(e[2]) + "</span></li>";
   }).join("") : '<li class="empty">No switching recorded yet</li>';
-  slist();
+  slist(); ishow();
 }
 
 // ---- schedules
@@ -345,7 +351,7 @@ function slist() {
   (d.sj || []).forEach(function (j, i) {
     var p = paused.indexOf(j.id) >= 0, skip = d.sk.indexOf(j.id) >= 0;
     var what = j.a !== null ? (j.a ? "On" : "Off") : (j.m === "Shelly.Update" ? "Firmware update" : esc(j.m || "Other action"));
-    var tags = (skip ? '<span class="tag">Skips Shabbos/Yom Tov</span>' : "") + (p ? '<span class="tag">Paused now</span>' : "");
+    var tags = (skip ? '<span class="tag">Skips Shabbos/Yom Tov</span>' : "") + (p ? '<span class="tag">Paused now</span>' : "") + itag(d, j.ia);
     h += '<li class="sch' + (j.en || p ? "" : " off") + '">' +
       '<div class="sch-main"><span class="sch-when">' + (j.t || "Custom") + "</span>" +
         '<span class="sch-what ' + (j.a === null ? "" : j.a ? "on" : "off") + '">' + what + "</span>" +
@@ -361,7 +367,7 @@ function slist() {
     h += '<li class="sch' + (r[4] ? "" : " off") + '">' +
       '<div class="sch-main"><span class="sch-when">' + rtxt(r) + "</span>" +
         '<span class="sch-what ' + (r[2] ? "on" : "off") + '">' + (r[2] ? "On" : "Off") + "</span>" +
-        (r[3] ? '<span class="sch-days">' + FL[r[3]] + "</span>" : '<span class="sch-days">Every time</span>') + "</div>" +
+        (r[3] ? '<span class="sch-days">' + FL[r[3]] + "</span>" : '<span class="sch-days">Every time</span>') + itag(d, r[5] || "") + "</div>" +
       '<div class="sch-ctl"><button onclick="ren(' + i + ')">' + (r[4] ? "Disable" : "Enable") + '</button>' +
         '<button onclick="redit(' + i + ')">Edit</button><button onclick="cpopen(\'r\',' + i + ')">Copy</button><button onclick="rdel(' + i + ')">Delete</button></div></li>';
   });
@@ -410,7 +416,7 @@ function cpgo() {
           var j = it.j;
           if ((t.sj || []).some(function (x) { return x.fx && x.ts === j.ts && x.a === j.a; })) { skipped.push(t.name); return; }
           q = q.then(function () {
-            return rpcAt(t.base, "Schedule.Create", { enable: j.en, timespec: j.ts, calls: [{ method: "Switch.Set", params: { id: t.sw, on: j.a } }] })
+            return rpcAt(t.base, "Schedule.Create", { enable: j.en, timespec: j.ts, calls: jcalls(t, j.a, j.ia) })
               .then(function (c) { done.push(t.name); if (src.sk.indexOf(j.id) >= 0) return skset(t, c.id, true); });
           });
         });
@@ -434,7 +440,7 @@ function cpgo() {
 function msg(t) { $("smsg").textContent = t || ""; }
 function after(p) {                              // run a change, then reload this device's schedules and status
   var d = SEL; msg("Saving");
-  return p.then(function () { return refreshDev(d, true); }).catch(function (e) { msg("Failed: " + e.message); throw e; });
+  return p.then(function () { return refreshDev(d, true); }).then(function () { return iforce(d); }).catch(function (e) { msg("Failed: " + e.message); throw e; });
 }
 function skset(d, id, on) {                    // the skip list is one per device, shared by its relays: read it fresh first
   return rpcAt(d.base, "KVS.Get", { key: "zmanim_skip" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return []; })
@@ -472,9 +478,88 @@ function hclear() {
     .catch(function (e) { alert("Couldn't clear: " + e.message); });
 }
 
+// ---- the input (push button / wall switch): what a press does, per schedule
+// Device keeps: zmanim_in = "e,s" (e: use presses, s: not on Shabbos/Yom Tov); zmanim_ia = the rule now in force.
+// A rule is "" (press does nothing) or "a1,m1,s2,a2,m2" - see the script (v8.5).
+function ion(d) { return !!d && String(d.inp || "").charAt(0) === "1"; }
+function iok(d) { return !!(d && d.sum && d.sum.v >= 85); }
+function jcalls(d, on, ia) {                     // a time schedule: switch, plus (input in use) the press rule from then on
+  var c = [{ method: "Switch.Set", params: { id: d.sw, on: on } }];
+  if (ia !== null && ia !== undefined) c.push({ method: "KVS.Set", params: { key: ikey(d, "zmanim_ia"), value: ia } });
+  return c;
+}
+function itxt(rs) {
+  if (!rs) return "Press does nothing";
+  var p = rs.split(",").map(Number);
+  function a(on, m) { return (on ? "on" : "off") + (m ? " for " + m + " min" : ""); }
+  return "Press: " + a(p[0], p[1]) + (p[1] ? (p[2] ? ", again: " + a(p[3], p[4]) : ", again: nothing") : "");
+}
+function itag(d, rs) { return ion(d) && rs !== undefined && rs !== null ? '<span class="tag">' + esc(itxt(rs)) + "</span>" : ""; }
+function ishow() {                               // input part of the form, and the device's input settings
+  var d = SEL, ok = iok(d), on = ok && ion(d);
+  $("ipanel").hidden = !d; if (!d) return;
+  $("iold").hidden = ok; $("iset").hidden = !ok;
+  $("ien").checked = on; $("ish").checked = ok && String(d.inp || "").charAt(2) === "1"; $("ish").disabled = !on;
+  $("ifm").hidden = !on;
+  var act = $("iac").value === "1", tm = act && $("im1").value === "1";
+  $("ifirst").hidden = !act; $("in1").hidden = !tm; $("isec").hidden = !tm;
+  var s2 = $("is2").value !== "0";
+  $("im2l").hidden = !s2; $("in2").hidden = !(s2 && $("im2").value === "1");
+}
+function ifill(rs) {
+  var p = rs ? rs.split(",").map(Number) : null;
+  $("iac").value = p ? "1" : "0";
+  $("ia1").value = p && !p[0] ? "off" : "on"; $("im1").value = p && p[1] ? "1" : "0"; $("in1").value = (p && p[1]) || 20;
+  $("is2").value = p && p[2] ? (p[3] ? "on" : "off") : "0"; $("im2").value = p && p[4] ? "1" : "0"; $("in2").value = (p && p[4]) || 20;
+  ishow();
+}
+function iread() {                               // the form's rule, or false if a number is wrong
+  if ($("iac").value !== "1") return "";
+  function mins(sel, inp) {
+    if ($(sel).value !== "1") return 0;
+    var m = Math.round(+$(inp).value);
+    if (!(m >= 1 && m <= 720)) { msg("Press minutes must be between 1 and 720"); throw 0; }
+    return m;
+  }
+  try {
+    var m1 = mins("im1", "in1"), s2 = m1 ? $("is2").value : "0", m2 = s2 !== "0" ? mins("im2", "in2") : 0;
+    return [$("ia1").value === "on" ? 1 : 0, m1, s2 !== "0" ? 1 : 0, s2 === "on" ? 1 : 0, m2].join(",");
+  } catch (e) { return false; }
+}
+function iforce(d) {                            // after a change: put the rule of the time schedule that ran last in force now
+  if (!ion(d) || !iok(d) || !d.sum || !d.sum.ts) return;
+  var ts = d.sum.ts, off = d.sum.off, lw = ts + O(ts, off), day0 = lw - lw % 86400, best = null, bt = 0;
+  (d.sj || []).forEach(function (j) {
+    if (!j.fx || !j.en || j.ia === null) return;
+    var sec = +j.t.slice(0, 2) * 3600 + +j.t.slice(3) * 60;
+    for (var k = 0; k < 8; k++) {
+      var wd = (new Date(day0 * 1000).getUTCDay() - k + 7) % 7;
+      if (j.d.indexOf(wd) < 0) continue;
+      var t = wall(day0 - k * 86400 + sec, off);
+      if (t <= ts) { if (t > bt) { bt = t; best = j; } break; }
+    }
+  });
+  if (best) return rpcAt(d.base, "KVS.Set", { key: ikey(d, "zmanim_ia"), value: best.ia });
+}
+function isave() {                               // tick boxes: save on the device, input Detached, schedules carry a press rule
+  var d = SEL, en = $("ien").checked, sh = en && $("ish").checked;
+  $("imsg").textContent = "Saving";
+  var p = rpcAt(d.base, "KVS.Set", { key: ikey(d, "zmanim_in"), value: (en ? "1" : "0") + "," + (sh ? "1" : "0") })
+    .then(function () { return rpcAt(d.base, "Switch.SetConfig", { id: d.sw, config: { in_mode: "detached" } }); });
+  if (en && !ion(d)) p = p.then(function () {    // first time on: existing time schedules get "press does nothing" until edited
+    return (d.sj || []).filter(function (j) { return j.fx && j.ia === null; }).reduce(function (q, j) {
+      return q.then(function () { return rpcAt(d.base, "Schedule.Update", { id: j.id, calls: jcalls(d, j.a, "") }); });
+    }, Promise.resolve());
+  });
+  p.then(function () { d.inp = (en ? "1" : "0") + "," + (sh ? "1" : "0"); return refreshDev(d, true); }).then(function () { return iforce(d); })
+    .then(function () { $("imsg").textContent = en ? "Saved. Set what a press does on each schedule." : "Saved. Presses now do nothing."; })
+    .catch(function (e) { $("imsg").textContent = "Failed: " + e.message; ishow(); });
+}
+
 // ---- add / edit form
 function sform() {
   var tg = +$("stg").value;
+  ishow();
   $("fx").hidden = tg > 0; $("zm").hidden = tg === 0;
   $("smn").hidden = $("sof").value === "0";
   var opts = tg === 2 ? FL.slice(0, 3) : FL, cur = $("sfl").value;
@@ -483,7 +568,7 @@ function sform() {
 }
 function dsty() { for (var i = 0; i < 7; i++) $("dl" + i).classList.toggle("on", $("d" + i).checked); }
 function sreset() {
-  ED = null; $("sft").textContent = "Add a schedule"; $("stg").value = "0"; $("sof").value = "0"; $("ssk").checked = false;
+  ED = null; $("sft").textContent = "Add a schedule"; $("stg").value = "0"; $("sof").value = "0"; $("ssk").checked = false; ifill("");
   for (var k = 0; k < 7; k++) $("d" + k).checked = false;
   dsty(); sform();
 }
@@ -491,22 +576,24 @@ function sedit(i) {
   var j = SEL.sj[i]; ED = j.id; $("sft").textContent = "Edit schedule";
   $("stg").value = "0"; sform(); $("stm").value = j.t;
   for (var k = 0; k < 7; k++) $("d" + k).checked = j.d.indexOf(k) >= 0;
-  dsty(); $("sac").value = j.a ? "on" : "off"; $("ssk").checked = SEL.sk.indexOf(j.id) >= 0; msg("");
+  dsty(); $("sac").value = j.a ? "on" : "off"; $("ssk").checked = SEL.sk.indexOf(j.id) >= 0; ifill(j.ia || ""); msg("");
   $("sform").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 function redit(i) {
   var r = SEL.rj[i]; ED = "r" + i; $("sft").textContent = "Edit schedule";
   $("stg").value = r[0]; $("sof").value = r[1] < 0 ? "-1" : (r[1] > 0 ? "1" : "0"); $("smn").value = Math.abs(r[1]) || 10;
-  sform(); $("sfl").value = r[3]; $("sac").value = r[2] ? "on" : "off"; msg("");
+  sform(); $("sfl").value = r[3]; $("sac").value = r[2] ? "on" : "off"; ifill(r[5] || ""); msg("");
   $("sform").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 function done() { sreset(); msg("Saved"); }
 function ssave() {
-  var d = SEL, tg = +$("stg").value, on = $("sac").value === "on";
+  var d = SEL, tg = +$("stg").value, on = $("sac").value === "on", ia = iread();
+  if (ia === false) return;
   if (tg > 0) {
     var sg = +$("sof").value, mn = Math.round(+$("smn").value);
     if (sg !== 0 && !(mn >= 1 && mn <= 180)) { msg("Minutes must be between 1 and 180"); return; }
     var r = [tg, sg ? sg * mn : 0, on ? 1 : 0, +$("sfl").value, 1];
+    if (ion(d)) r.push(ia);
     if (typeof ED === "string") {
       var ri = +ED.slice(1); r[4] = d.rj[ri][4];
       rchange(function (rj) { rj[ri] = r; }).then(done);
@@ -521,7 +608,7 @@ function ssave() {
   if (!days.length) { msg("Pick at least one day"); return; }
   if (!/^\d\d:\d\d$/.test(t)) { msg("Enter a time"); return; }
   var ts = "0 " + (+t.slice(3)) + " " + (+t.slice(0, 2)) + " * * " + (days.length === 7 ? "*" : days.map(function (x) { return SD[x]; }).join(","));
-  var p = { enable: true, timespec: ts, calls: [{ method: "Switch.Set", params: { id: d.sw, on: on } }] }, sk = $("ssk").checked;
+  var p = { enable: true, timespec: ts, calls: jcalls(d, on, ion(d) ? ia : null) }, sk = $("ssk").checked;
   if (typeof ED === "string") {                   // zman schedule changed into a fixed-time one
     var zi = +ED.slice(1);
     after(rpcAt(d.base, "Schedule.Create", p).then(function (c) { return skset(d, c.id, sk); }))
@@ -1104,6 +1191,12 @@ document.getElementById("app").outerHTML =
       '<div class="panel"><h3>Coming up</h3><ul id="up" class="evs"></ul></div>' +
       '<div class="panel"><div class="ph"><h3>Recent switching</h3><button class="ph-btn" onclick="hclear()">Clear</button></div><ul id="hist" class="evs"></ul></div>' +
     '</div>' +
+    '<div class="panel" id="ipanel"><h3>Input</h3>' +
+      '<p class="hint" id="iold" hidden>Update this device\'s script to v8.5 to use its input (push button or wall switch) from this page.</p>' +
+      '<div id="iset"><label class="check"><input type="checkbox" id="ien" onchange="isave()">Use the input (push button or wall switch)</label>' +
+        '<label class="check"><input type="checkbox" id="ish" onchange="isave()">Input off on Shabbos and Yom Tov</label>' +
+        '<p class="hint">Not ticked: a press does nothing. Ticked: what a press does is set on each schedule, from that schedule until the next one. Delete any input actions made in the Shelly app.</p>' +
+        '<p class="note" id="imsg" aria-live="polite"></p></div></div>' +
     '<div class="panel"><div class="ph"><h3>Schedules</h3><button class="ph-btn" id="cpall" onclick="cpopen(\'all\')">Copy all to…</button></div><ul id="sl" class="schs"></ul>' +
       '<div class="cpbox" id="cpbox" hidden><span id="cplabel"></span><select id="cpto" aria-label="Copy to"></select>' +
         '<div class="row"><button class="primary" onclick="cpgo()">Copy</button><button onclick="cpclose()">Cancel</button></div></div>' +
@@ -1115,6 +1208,16 @@ document.getElementById("app").outerHTML =
           '<input type="number" id="smn" min="1" max="180" value="10" aria-label="Minutes"></span></label>' +
           '<label>Applies to<select id="sfl"></select></label></div>' +
         '<label>Action<select id="sac"><option value="on">Turn on</option><option value="off">Turn off</option></select></label>' +
+        '<div id="ifm" class="ifm" hidden><h5>Input, from this schedule until the next</h5>' +
+          '<label>A press<select id="iac" onchange="ishow()"><option value="0">Does nothing</option><option value="1">Switches the output</option></select></label>' +
+          '<div id="ifirst"><label>First press<span class="pair"><select id="ia1"><option value="on">Turn on</option><option value="off">Turn off</option></select>' +
+            '<select id="im1" onchange="ishow()"><option value="0">Until the next schedule</option><option value="1">For minutes</option></select>' +
+            '<input type="number" id="in1" min="1" max="720" value="20" aria-label="Minutes"></span></label>' +
+          '<div id="isec"><label>Second press, while the first is timing<span class="pair"><select id="is2" onchange="ishow()"><option value="0">Does nothing</option><option value="on">Turn on</option><option value="off">Turn off</option></select>' +
+            '<span id="im2l"><select id="im2" onchange="ishow()"><option value="0">Until the next schedule</option><option value="1">For minutes</option></select></span>' +
+            '<input type="number" id="in2" min="1" max="720" value="20" aria-label="Minutes"></span></label>' +
+            '<p class="hint">When the minutes run out it switches back to how it was before the first press. After that the next press is a first press again.</p></div></div>' +
+        '</div>' +
         '<div class="row"><button class="primary" onclick="ssave()">Save schedule</button><button onclick="sreset();msg(\'\')">Clear</button></div>' +
         '<p class="note" id="smsg" aria-live="polite"></p></div></div>' +
   '</section>' +
