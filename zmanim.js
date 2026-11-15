@@ -1087,6 +1087,7 @@ function zday() {
       if (!motzei) {
         var fast = hol.some(function (e) { var g = e.getFlags(); return (g & (hc.flags.MINOR_FAST | hc.flags.MAJOR_FAST)) && !(g & hc.flags.YOM_KIPPUR_KATAN); });
         var tn = sec(z.tzeit(fast ? 7.0833 : 8.05)); if (tn) rows.push([fast ? "End of fast (7.0833\u00b0)" : "Nightfall (Tzeis, 8.05\u00b0)", up(tn)]);
+        var ssx = sec(z.sunset()); if (ssx) rows.push(["Nightfall, Rabbeinu Tam (72 min)", up(ssx + 4320)]);
       }
     } else { var tg = sec(z.tzeit(8.5)); if (tg) rows.push(["Nightfall (Tzeis, 8.5\u00b0)", r24(tg)]); }
     rows.sort(function (a, b) { return a[1] - b[1]; });
@@ -1095,7 +1096,7 @@ function zday() {
       '<ul class="evs zd-list">' + rows.filter(function (r) { return r[1]; }).map(function (r) {
         return '<li class="ev' + (r[2] ? "" : " info") + '"><span class="ev-when"><b>' + (lon ? hm12(r[1], L.tz) : hmIn(r[1], L.tz)) + '</b></span><span class="ev-why">' + esc(r[0]) + "</span></li>";
       }).join("") + "</ul>" +
-      (lon ? '<p class="hint">As the Kdasya London luach: sunrise and sunset at 50\u2032 below the horizon; Magen Avraham with 72 fixed minutes; Shema and Shacharis rounded down, Alos, sunrise and Chatzos to the nearest minute, Mincha Gedola and Plag up; Plag left out when it is less than 3 minutes before sunset. Nightfall on weekdays 8.05\u00b0, on fast days 7.0833\u00b0.</p>'
+      (lon ? '<p class="hint">As the Kdasya London luach: sunrise and sunset at 50\u2032 below the horizon; Magen Avraham with 72 fixed minutes; Shema and Shacharis rounded down, Alos, sunrise and Chatzos to the nearest minute, Mincha Gedola and Plag up; Plag left out when it is less than 3 minutes before sunset. Nightfall on weekdays 8.05\u00b0 (fast days 7.0833\u00b0) and Rabbeinu Tam 72 fixed minutes, both rounded up.</p>'
            : '<p class="hint">Sunset and candle lighting drop the seconds; havdalah uses your 24-second rule. Other times are rounded the cautious way: deadlines down, earliest times up.</p>');
   }).catch(function (e) { out.innerHTML = '<p class="empty">' + esc(e.message) + "</p>"; });
 }
