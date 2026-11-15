@@ -287,20 +287,19 @@ function cards() {
     var nextTxt = !s ? "" : nx ? "Turns " + (nx.on ? "on" : "off") + " " + (/^(Today|Tomorrow)$/.test(dayLabel(nx.t, s.ts, s.off)) ? "" : "on ") + lc(dayLabel(nx.t, s.ts, s.off)) + " at " + hm(nx.t, s.off) : "Nothing scheduled this week";
     var ready = s && d.core !== undefined && !d.dead;
     return '<article class="dev' + (on ? " is-on" : "") + (d === SEL ? " is-sel" : "") + (ready ? "" : " is-wait") + '">' +
-      '<button class="dev-head" onclick="pick(' + i + ')" aria-expanded="' + (d === SEL) + '">' +
+      '<button class="dev-head" onclick="pick(' + i + ')" aria-label="' + esc(d.name) + ', schedules and details">' +
         '<span class="lamp" aria-hidden="true"></span>' +
-        '<span class="dev-name">' + esc(d.name) + "</span>" +
-        '<span class="dev-state">' + (s ? (on ? "On" : "Off") : "") + "</span>" +
-        '<span class="chev" aria-hidden="true"></span>' +
+        '<span class="dev-txt"><span class="dev-name">' + esc(d.name) + "</span>" +
+          (nextTxt ? '<span class="dev-next">' + esc(nextTxt) + "</span>" : "") +
+          (note ? '<span class="dev-note">' + esc(note) + "</span>" : "") + "</span>" +
       "</button>" +
-      (nextTxt ? '<p class="dev-next">' + esc(nextTxt) + "</p>" : "") +
-      (note ? '<p class="dev-note">' + esc(note) + "</p>" : "") +
-      '<div class="dev-ctl">' +
-        '<button class="b-on" onclick="sw(' + i + ',1)"' + (ready ? "" : " disabled") + ">Turn on</button>" +
-        '<button class="b-off" onclick="sw(' + i + ',0)"' + (ready ? "" : " disabled") + ">Turn off</button>" +
-      "</div>" +
+      tgl(on, "sw(" + i + "," + (on ? 0 : 1) + ")", d.name, !ready) +
     "</article>";
   }).join("");
+}
+function tgl(on, act, label, off, bare) {         // on/off switch; bare = no On/Off word (schedule rows, where On/Off is the action)
+  return '<button class="tgl' + (on ? " is-on" : "") + '" role="switch" aria-checked="' + !!on + '" aria-label="' + esc(label) + '"' +
+    (off ? " disabled" : "") + ' onclick="event.stopPropagation();' + act + '">' + (bare ? "" : '<span class="tgl-t">' + (on ? "On" : "Off") + "</span>") + '<span class="tgl-k"></span></button>';
 }
 function sw(i, on) {
   var d = DEVS[i];
@@ -313,9 +312,20 @@ function pick(i) {
   SEL = SEL === d ? null : d;
   ED = null; msg(""); if ($("cpbox")) cpclose();
   if (SEL) sreset();
+  document.body.classList.toggle("sheet-open", !!SEL);
+  if (SEL) { tab("sch"); sform(); $("sform").hidden = true; }
   cards(); details();
-  if (SEL) { $("detail").scrollIntoView({ behavior: "smooth", block: "start" }); refreshDev(d, true); }
+  if (SEL) { $("sheet-in").scrollTop = 0; $("det-close").focus(); refreshDev(d, true); }
 }
+var TAB = "sch";
+function tab(t) {
+  TAB = t;
+  ["sch", "up", "hist", "in"].forEach(function (k) {
+    $("t-" + k).hidden = k !== t;
+    var b = $("tb-" + k); b.setAttribute("aria-selected", k === t); b.classList.toggle("on", k === t);
+  });
+}
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && SEL && $("cpbox").hidden) pick(DEVS.indexOf(SEL)); });
 
 // ------------------------------------------------------------------ details of the selected device
 var ED = null;
@@ -326,7 +336,7 @@ function details() {
   var d = SEL, s = d.sum;
   $("det-name").textContent = d.name;
   $("det-bar").classList.toggle("is-on", !!(s && s.relay));
-  $("det-state").textContent = s ? (s.relay ? "On" : "Off") : "";
+  $("det-state").innerHTML = s ? tgl(s.relay, "sw(DEVS.indexOf(SEL)," + (s.relay ? 0 : 1) + ")", d.name, d.core === undefined || d.dead) : "";
   var up = upcoming(d);
   $("up").innerHTML = !s ? '<li class="empty">Loading</li>' : up.length ? up.map(function (e) {
     return '<li class="ev' + (e.skip ? " skip" : "") + (e.on === null ? " info" : "") + '">' +
@@ -352,26 +362,24 @@ function slist() {
     var p = paused.indexOf(j.id) >= 0, skip = d.sk.indexOf(j.id) >= 0;
     var what = j.a !== null ? (j.a ? "On" : "Off") : (j.m === "Shelly.Update" ? "Firmware update" : esc(j.m || "Other action"));
     var tags = (skip ? '<span class="tag">Skips Shabbos/Yom Tov</span>' : "") + (p ? '<span class="tag">Paused now</span>' : "") + itag(d, j.ia);
-    h += '<li class="sch' + (j.en || p ? "" : " off") + '">' +
-      '<div class="sch-main"><span class="sch-when">' + (j.t || "Custom") + "</span>" +
+    var body = '<span class="sch-when">' + (j.t || "Custom") + "</span>" +
         '<span class="sch-what ' + (j.a === null ? "" : j.a ? "on" : "off") + '">' + what + "</span>" +
-        '<span class="sch-days">' + (j.t ? dtxt(j.d) : esc(j.ts)) + "</span>" + tags + "</div>" +
-      '<div class="sch-ctl">' +
-        (j.fx ? "" : '<button onclick="sktog(' + i + ')">' + (skip ? "Run on Shabbos" : "Skip Shabbos") + "</button>") +
-        '<button onclick="sen(' + i + ')">' + (j.en || p ? "Disable" : "Enable") + "</button>" +
-        (j.fx ? '<button onclick="sedit(' + i + ')">Edit</button>' : "") +
-        (j.fx ? '<button onclick="cpopen(\'j\',' + i + ')">Copy</button>' : "") +
-        '<button onclick="sdel(' + i + ')">Delete</button></div></li>';
+        '<span class="sch-days">' + (j.t ? dtxt(j.d) : esc(j.ts)) + "</span>" + (tags ? '<span class="sch-tags">' + tags + "</span>" : "");
+    h += '<li class="sch' + (j.en || p ? "" : " off") + '">' +
+      (j.fx ? '<button class="sch-main" onclick="sedit(' + i + ')" aria-label="Edit ' + esc(j.t + " " + what) + '">' + body + '<span class="sch-go" aria-hidden="true"></span></button>'
+            : '<div class="sch-main">' + body + '<span class="sch-ctl"><button onclick="sktog(' + i + ')">' + (skip ? "Run on Shabbos" : "Skip Shabbos") + '</button><button onclick="sdel(' + i + ')">Delete</button></span></div>') +
+      tgl(j.en || p, "sen(" + i + ")", (j.t || "Schedule") + " schedule active", false, true) + "</li>";
   });
   (d.rj || []).forEach(function (r, i) {
-    h += '<li class="sch' + (r[4] ? "" : " off") + '">' +
-      '<div class="sch-main"><span class="sch-when">' + rtxt(r) + "</span>" +
+    var it = itag(d, r[5] || "");
+    h += '<li class="sch zman' + (r[4] ? "" : " off") + '">' +
+      '<button class="sch-main" onclick="redit(' + i + ')" aria-label="Edit ' + esc(rtxt(r)) + '"><span class="sch-when">' + rtxt(r) + "</span>" +
         '<span class="sch-what ' + (r[2] ? "on" : "off") + '">' + (r[2] ? "On" : "Off") + "</span>" +
-        (r[3] ? '<span class="sch-days">' + FL[r[3]] + "</span>" : '<span class="sch-days">Every time</span>') + itag(d, r[5] || "") + "</div>" +
-      '<div class="sch-ctl"><button onclick="ren(' + i + ')">' + (r[4] ? "Disable" : "Enable") + '</button>' +
-        '<button onclick="redit(' + i + ')">Edit</button><button onclick="cpopen(\'r\',' + i + ')">Copy</button><button onclick="rdel(' + i + ')">Delete</button></div></li>';
+        '<span class="sch-days">' + (r[3] ? FL[r[3]] : "Every time") + "</span>" + (it ? '<span class="sch-tags">' + it + "</span>" : "") +
+        '<span class="sch-go" aria-hidden="true"></span></button>' +
+      tgl(r[4], "ren(" + i + ")", rtxt(r) + " schedule active", false, true) + "</li>";
   });
-  $("sl").innerHTML = h || '<li class="empty">No schedules yet. Add one below.</li>';
+  $("sl").innerHTML = h || '<li class="empty">No schedules yet.</li>';
   $("cpall").hidden = !((d.sj || []).some(function (j) { return j.fx; }) || (d.rj || []).length);
 }
 
@@ -458,7 +466,7 @@ function sen(i) {
 }
 function sdel(i) {
   var d = SEL, id = d.sj[i].id;
-  if (confirm("Delete this schedule?")) after(rpcAt(d.base, "Schedule.Delete", { id: id }).then(function () { return d.sk.indexOf(id) >= 0 ? skset(d, id, false) : null; })).then(function () { sreset(); msg("Deleted"); });
+  if (confirm("Delete this schedule?")) after(rpcAt(d.base, "Schedule.Delete", { id: id }).then(function () { return d.sk.indexOf(id) >= 0 ? skset(d, id, false) : null; })).then(function () { sclose(); msg("Deleted"); });
 }
 function rsave(d) {
   var v = JSON.stringify(d.rj);
@@ -468,7 +476,11 @@ function rsave(d) {
 }
 function rchange(f) { var d = SEL, old = JSON.stringify(d.rj || []); d.rj = d.rj || []; f(d.rj); return after(rsave(d).catch(function (e) { d.rj = JSON.parse(old); throw e; })); }
 function ren(i) { rchange(function (rj) { rj[i][4] = rj[i][4] ? 0 : 1; }).then(function () { msg(""); }); }
-function rdel(i) { if (confirm("Delete this schedule?")) rchange(function (rj) { rj.splice(i, 1); }).then(function () { sreset(); msg("Deleted"); }); }
+function scopy() { var d = SEL; if (typeof ED === "string") cpopen("r", +ED.slice(1)); else cpopen("j", d.sj.map(function (j) { return j.id; }).indexOf(ED)); }
+function sdelEd() { var d = SEL; if (typeof ED === "string") rdel(+ED.slice(1)); else sdel(d.sj.map(function (j) { return j.id; }).indexOf(ED)); }
+function sadd() { sreset(); msg(""); $("sform").hidden = false; $("sadd").hidden = true; $("sform").scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+function sclose() { sreset(); msg(""); $("sform").hidden = true; $("sadd").hidden = false; }
+function rdel(i) { if (confirm("Delete this schedule?")) rchange(function (rj) { rj.splice(i, 1); }).then(function () { sclose(); msg("Deleted"); }); }
 
 function hclear() {
   var d = SEL; if (!d || !confirm("Clear the switching history for " + d.name + "?")) return;
@@ -568,24 +580,25 @@ function sform() {
 }
 function dsty() { for (var i = 0; i < 7; i++) $("dl" + i).classList.toggle("on", $("d" + i).checked); }
 function sreset() {
-  ED = null; $("sft").textContent = "Add a schedule"; $("stg").value = "0"; $("sof").value = "0"; $("ssk").checked = false; ifill("");
+  ED = null; $("sft").textContent = "New schedule"; $("sedact").hidden = true; $("stg").value = "0"; $("sof").value = "0"; $("ssk").checked = false; ifill("");
   for (var k = 0; k < 7; k++) $("d" + k).checked = false;
   dsty(); sform();
 }
 function sedit(i) {
-  var j = SEL.sj[i]; ED = j.id; $("sft").textContent = "Edit schedule";
+  var j = SEL.sj[i]; ED = j.id; $("sft").textContent = "Edit schedule"; sopen();
   $("stg").value = "0"; sform(); $("stm").value = j.t;
   for (var k = 0; k < 7; k++) $("d" + k).checked = j.d.indexOf(k) >= 0;
   dsty(); $("sac").value = j.a ? "on" : "off"; $("ssk").checked = SEL.sk.indexOf(j.id) >= 0; ifill(j.ia || ""); msg("");
   $("sform").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 function redit(i) {
-  var r = SEL.rj[i]; ED = "r" + i; $("sft").textContent = "Edit schedule";
+  var r = SEL.rj[i]; ED = "r" + i; $("sft").textContent = "Edit schedule"; sopen();
   $("stg").value = r[0]; $("sof").value = r[1] < 0 ? "-1" : (r[1] > 0 ? "1" : "0"); $("smn").value = Math.abs(r[1]) || 10;
   sform(); $("sfl").value = r[3]; $("sac").value = r[2] ? "on" : "off"; ifill(r[5] || ""); msg("");
   $("sform").scrollIntoView({ behavior: "smooth", block: "center" });
 }
-function done() { sreset(); msg("Saved"); }
+function sopen() { $("sform").hidden = false; $("sadd").hidden = true; $("sedact").hidden = false; }
+function done() { sclose(); msg("Saved"); }
 function ssave() {
   var d = SEL, tg = +$("stg").value, on = $("sac").value === "on", ia = iread();
   if (ia === false) return;
@@ -1225,23 +1238,20 @@ document.getElementById("app").outerHTML =
 '<main>' +
   '<section class="hero" id="hero" aria-live="polite"><p class="hero-wait">Loading zmanim</p></section>' +
   '<section aria-label="Devices"><div id="cards" class="cards"></div></section>' +
-  '<section class="detail" id="detail" hidden>' +
-    '<div class="det-bar" id="det-bar"><span class="lamp"></span><h2 id="det-name"></h2><span class="dev-state" id="det-state"></span>' +
-      '<button class="det-close" onclick="pick(DEVS.indexOf(SEL))">Close</button></div>' +
-    '<div class="grid">' +
-      '<div class="panel"><h3>Coming up</h3><ul id="up" class="evs"></ul></div>' +
-      '<div class="panel"><div class="ph"><h3>Recent switching</h3><button class="ph-btn" onclick="hclear()">Clear</button></div><ul id="hist" class="evs"></ul></div>' +
-    '</div>' +
-    '<div class="panel" id="ipanel"><h3>Input</h3>' +
-      '<p class="hint" id="iold" hidden>Update this device\'s script to v8.5 to use its input (push button or wall switch) from this page.</p>' +
-      '<div id="iset"><label class="check"><input type="checkbox" id="ien" onchange="isave()">Use the input (push button or wall switch)</label>' +
-        '<label class="check"><input type="checkbox" id="ish" onchange="isave()">Input off on Shabbos and Yom Tov</label>' +
-        '<p class="hint">Not ticked: a press does nothing. Ticked: what a press does is set on each schedule, from that schedule until the next one. Delete any input actions made in the Shelly app.</p>' +
-        '<p class="note" id="imsg" aria-live="polite"></p></div></div>' +
-    '<div class="panel"><div class="ph"><h3>Schedules</h3><button class="ph-btn" id="cpall" onclick="cpopen(\'all\')">Copy all to…</button></div><ul id="sl" class="schs"></ul>' +
+  '<section class="sheet" id="detail" hidden role="dialog" aria-modal="true" aria-labelledby="det-name">' +
+    '<div class="sheet-bg" onclick="pick(DEVS.indexOf(SEL))"></div>' +
+    '<div class="sheet-in" id="sheet-in">' +
+    '<div class="det-bar" id="det-bar"><span class="lamp"></span><h2 id="det-name"></h2><span id="det-state"></span>' +
+      '<button class="det-close" id="det-close" onclick="pick(DEVS.indexOf(SEL))" aria-label="Close">&times;</button></div>' +
+    '<div class="tabs" role="tablist">' +
+      '<button role="tab" id="tb-sch" onclick="tab(\'sch\')">Schedules</button><button role="tab" id="tb-up" onclick="tab(\'up\')">Coming up</button>' +
+      '<button role="tab" id="tb-hist" onclick="tab(\'hist\')">History</button><button role="tab" id="tb-in" onclick="tab(\'in\')">Input</button></div>' +
+    '<div class="tabp" id="t-sch" role="tabpanel"><div class="ph"><p class="hint">Tap a schedule to change it. The switch turns it on or off.</p><button class="ph-btn" id="cpall" onclick="cpopen(\'all\')">Copy all to…</button></div>' +
+      '<ul id="sl" class="schs"></ul>' +
       '<div class="cpbox" id="cpbox" hidden><span id="cplabel"></span><select id="cpto" aria-label="Copy to"></select>' +
         '<div class="row"><button class="primary" onclick="cpgo()">Copy</button><button onclick="cpclose()">Cancel</button></div></div>' +
-      '<div class="form" id="sform"><h4 id="sft">Add a schedule</h4>' +
+      '<button class="add" id="sadd" onclick="sadd()">+ Add a schedule</button>' +
+      '<div class="form" id="sform" hidden><h4 id="sft">New schedule</h4>' +
         '<label>When<select id="stg" onchange="sform()"><option value="0">At a fixed time</option><option value="1">At candle lighting</option><option value="2">At havdalah</option></select></label>' +
         '<div id="fx"><label>Time<input type="time" id="stm" value="07:00"></label><div class="days" id="days" role="group" aria-label="Days"></div>' +
           '<label class="check"><input type="checkbox" id="ssk">Skip on Shabbos and Yom Tov</label></div>' +
@@ -1259,8 +1269,21 @@ document.getElementById("app").outerHTML =
             '<input type="number" id="in2" min="1" max="720" value="20" aria-label="Minutes"></span></label>' +
             '<p class="hint">When the minutes run out it switches back to how it was before the first press. After that the next press is a first press again.</p></div></div>' +
         '</div>' +
-        '<div class="row"><button class="primary" onclick="ssave()">Save schedule</button><button onclick="sreset();msg(\'\')">Clear</button></div>' +
-        '<p class="note" id="smsg" aria-live="polite"></p></div></div>' +
+        '<div class="row"><button class="primary" onclick="ssave()">Save schedule</button><button onclick="sclose()">Cancel</button>' +
+          '<span class="row-end" id="sedact" hidden><button onclick="scopy()">Copy to…</button><button class="danger" onclick="sdelEd()">Delete</button></span></div>' +
+      '</div>' +
+      '<p class="note" id="smsg" aria-live="polite"></p></div>' +
+    '<div class="tabp" id="t-up" role="tabpanel" hidden><ul id="up" class="evs"></ul></div>' +
+    '<div class="tabp" id="t-hist" role="tabpanel" hidden><div class="ph"><p class="hint">Last switching on this output.</p><button class="ph-btn" onclick="hclear()">Clear</button></div><ul id="hist" class="evs"></ul></div>' +
+    '<div class="tabp" id="t-in" role="tabpanel" hidden>' + 
+    '<div id="ipanel">' +
+      '<p class="hint" id="iold" hidden>Update this device\'s script to v8.5 to use its input (push button or wall switch) from this page.</p>' +
+      '<div id="iset"><label class="check"><input type="checkbox" id="ien" onchange="isave()">Use the input (push button or wall switch)</label>' +
+        '<label class="check"><input type="checkbox" id="ish" onchange="isave()">Input off on Shabbos and Yom Tov</label>' +
+        '<p class="hint">Not ticked: a press does nothing. Ticked: what a press does is set on each schedule, from that schedule until the next one. Delete any input actions made in the Shelly app.</p>' +
+        '<p class="note" id="imsg" aria-live="polite"></p></div></div>' +
+    '</div>' +
+    '</div>' +
   '</section>' +
   '<details class="manage fold" id="zset"><summary>Zmanim settings <span class="sum-note" id="zsum"></span></summary>' +
     '<p class="hint">For all devices. What each device does at candle lighting and havdalah is set in its own Schedules.</p>' +
