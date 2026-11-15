@@ -196,7 +196,8 @@ function loadSchedules(d) {                    // one request at a time: the mai
   })
     .then(function () { return rpcAt(d.base, "KVS.Get", { key: "zmanim_skip" }).then(function (r) { d.sk = JSON.parse(r.value); }).catch(function () { d.sk = []; }); })
     .then(function () { return rpcAt(d.base, "KVS.Get", { key: rkey(d) }).then(function (r) { d.rj = JSON.parse(r.value); }).catch(function () { d.rj = []; }); })
-    .then(function () { return rpcAt(d.base, "KVS.Get", { key: ikey(d, "zmanim_in") }).then(function (r) { d.inp = String(r.value); }).catch(function () { d.inp = ""; }); });
+    .then(function () { return rpcAt(d.base, "KVS.Get", { key: ikey(d, "zmanim_in") }).then(function (r) { d.inp = String(r.value); }).catch(function () { d.inp = ""; }); })
+    .then(function () { return rpcAt(d.base, "KVS.Get", { key: ikey(d, "zmanim_ia") }).then(function (r) { d.ia = String(r.value); }).catch(function () { d.ia = ""; }); });
 }
 function refreshDev(d, withSchedules) {
   if (d.core === undefined) return Promise.resolve();
@@ -506,6 +507,12 @@ function itxt(rs) {
   function a(on, m) { return (on ? "on" : "off") + (m ? " for " + m + " min" : ""); }
   return "Press: " + a(p[0], p[1]) + (p[1] ? (p[2] ? ", again: " + a(p[3], p[4]) : ", again: nothing") : "");
 }
+function isent(rs) {                            // the rule in words: "a press turns it on for 20 min; a second press ..."
+  if (!rs) return "a press does nothing";
+  var p = rs.split(",").map(Number);
+  function a(on, m) { return "turns it " + (on ? "on" : "off") + (m ? " for " + m + " min" : " until the next schedule"); }
+  return "a press " + a(p[0], p[1]) + (p[1] ? "; a second press within that time " + (p[2] ? a(p[3], p[4]) : "does nothing") : "");
+}
 function itag(d, rs) { return ion(d) && rs !== undefined && rs !== null ? '<span class="tag">' + esc(itxt(rs)) + "</span>" : ""; }
 function ishow() {                               // input part of the form, and the device's input settings
   var d = SEL, ok = iok(d), on = ok && ion(d);
@@ -513,6 +520,9 @@ function ishow() {                               // input part of the form, and 
   $("iold").hidden = ok; $("iset").hidden = !ok;
   $("ien").checked = on; $("ish").checked = ok && String(d.inp || "").charAt(2) === "1"; $("ish").disabled = !on;
   $("ifm").hidden = !on;
+  $("inow").hidden = !on;
+  if (on) $("inow").textContent = "Right now: " + isent(d.ia) +
+    (String(d.inp).charAt(2) === "1" && d.sum && d.sum.holy ? " (but it's Shabbos/Yom Tov, so presses are ignored)" : "") + ".";
   var act = $("iac").value === "1", tm = act && $("im1").value === "1";
   $("ifirst").hidden = !act; $("in1").hidden = !tm; $("isec").hidden = !tm;
   var s2 = $("is2").value !== "0";
@@ -551,7 +561,7 @@ function iforce(d) {                            // after a change: put the rule 
       if (t <= ts) { if (t > bt) { bt = t; best = j; } break; }
     }
   });
-  if (best) return rpcAt(d.base, "KVS.Set", { key: ikey(d, "zmanim_ia"), value: best.ia });
+  if (best) return rpcAt(d.base, "KVS.Set", { key: ikey(d, "zmanim_ia"), value: best.ia }).then(function () { d.ia = best.ia; if (d === SEL) ishow(); });
 }
 function isave() {                               // tick boxes: save on the device, input Detached, schedules carry a press rule
   var d = SEL, en = $("ien").checked, sh = en && $("ish").checked;
@@ -1278,9 +1288,12 @@ document.getElementById("app").outerHTML =
     '<div class="tabp" id="t-in" role="tabpanel" hidden>' + 
     '<div id="ipanel">' +
       '<p class="hint" id="iold" hidden>Update this device\'s script to v8.5 to use its input (push button or wall switch) from this page.</p>' +
-      '<div id="iset"><label class="check"><input type="checkbox" id="ien" onchange="isave()">Use the input (push button or wall switch)</label>' +
-        '<label class="check"><input type="checkbox" id="ish" onchange="isave()">Input off on Shabbos and Yom Tov</label>' +
-        '<p class="hint">Not ticked: a press does nothing. Ticked: what a press does is set on each schedule, from that schedule until the next one. Delete any input actions made in the Shelly app.</p>' +
+      '<div id="iset"><label class="check"><input type="checkbox" id="ien" onchange="isave()">Use the push button / wall switch on this output</label>' +
+        '<p class="hint isub">Off: pressing it does nothing. On: each schedule decides what a press does, from that schedule until the next one. You set this when you add or edit a schedule.</p>' +
+        '<label class="check"><input type="checkbox" id="ish" onchange="isave()">Ignore it on Shabbos and Yom Tov</label>' +
+        '<p class="hint isub">From candle lighting until havdalah, pressing it does nothing.</p>' +
+        '<p class="inow" id="inow" hidden></p>' +
+        '<p class="hint">If you made an action for this input in the Shelly app, delete it, or both will react to a press.</p>' +
         '<p class="note" id="imsg" aria-live="polite"></p></div></div>' +
     '</div>' +
     '</div>' +
