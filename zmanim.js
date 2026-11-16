@@ -942,7 +942,7 @@ function zrows(hc, L, start, end) {
 function r24(t) { var x = t % 60; return x <= 24 ? t - x : t - x + 60; }
 function up60(t) { return t % 60 ? t - t % 60 + 60 : t; }
 function havCalc(r, F) {
-  if (F.hm === 2) {                               // London (Kdasya luach)
+  if (F.hm === 2) {                               // London (Kedassia luach)
     if (!r.tz[0]) return { t: 0, how: "" };
     var a = r24(r.sunset + 73 * 60), b = up60(r.tz[0] + 480);
     if (b > a) return { t: b, g: b, r: a, how: "London luach: 8.5\u00b0 + 8 min = $G, later than 73 min after sunset $S ($R), rounded up" };
@@ -1041,7 +1041,7 @@ function solarNoon(hc, date, lon) {             // true midday (sun crossing the
   var N = hc.NOAACalculator, u = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
   return u / 1000 + Math.round(N.getSolarNoonUTC(N.getJulianCenturiesFromJulianDay(u / 86400000 + 2440587.5), -lon) * 60);
 }
-function zLondon(hc, z, L, date, hol, sec, down, up) {   // the Kdasya London luach rules (their list of zmanim)
+function zLondon(hc, z, L, date, hol, sec, down, up) {   // the Kedassia London luach rules (their list of zmanim)
   function near(t) { return t % 60 >= 30 ? t - t % 60 + 60 : t - t % 60; }
   var sr = sec(z.sunrise()), ss = sec(z.sunset()); if (!sr || !ss) return [];
   var a = sr - 4320, hM = (ss + 4320 - a) / 12, hG = (ss - sr) / 12, noon = solarNoon(hc, date, L.lon);
@@ -1119,7 +1119,7 @@ function zday() {
       '<ul class="evs zd-list">' + rows.filter(function (r) { return r[1]; }).map(function (r) {
         return '<li class="ev' + (r[2] ? "" : " info") + '"><span class="ev-when"><b>' + (lon ? hm12(r[1], L.tz) : hmIn(r[1], L.tz)) + '</b></span><span class="ev-why">' + esc(r[0]) + "</span></li>";
       }).join("") + "</ul>" +
-      (lon ? '<p class="hint">As the Kdasya London luach: sunrise and sunset at 50\u2032 below the horizon; Magen Avraham with 72 fixed minutes; Shema and Shacharis rounded down, Alos, sunrise and Chatzos to the nearest minute, Mincha Gedola and Plag up; Plag left out when it is less than 3 minutes before sunset. Nightfall on weekdays 8.05\u00b0 (fast days 7.0833\u00b0) and Rabbeinu Tam 72 fixed minutes, both rounded up.</p>'
+      (lon ? '<p class="hint">As the Kedassia London luach: sunrise and sunset at 50\u2032 below the horizon; Magen Avraham with 72 fixed minutes; Shema and Shacharis rounded down, Alos, sunrise and Chatzos to the nearest minute, Mincha Gedola and Plag up; Plag left out when it is less than 3 minutes before sunset. Nightfall on weekdays 8.05\u00b0 (fast days 7.0833\u00b0) and Rabbeinu Tam 72 fixed minutes, both rounded up.</p>'
            : '<p class="hint">Sunset and candle lighting drop the seconds; havdalah uses your 24-second rule. Other times are rounded the cautious way: deadlines down, earliest times up.</p>');
   }).catch(function (e) { out.innerHTML = '<p class="empty">' + esc(e.message) + "</p>"; });
 }
@@ -1302,8 +1302,8 @@ document.getElementById("app").outerHTML =
     '<p class="hint">For all devices. What each device does at candle lighting and havdalah is set in its own Schedules.</p>' +
     '<label>Location<select id="zl" onchange="zchanged()"></select></label><p class="note" id="zlmsg"></p>' +
     '<label>Candle lighting, minutes before sunset<input type="number" id="zc" min="0" max="60" oninput="zchanged()"></label>' +
-    '<label>Havdalah<select id="zhm" onchange="zhv();zchanged()"><option value="0">Geonim</option><option value="1">Rabbeinu Tam</option><option value="2">London (Kdasya luach)</option></select></label>' +
-    '<p class="hint" id="zlh" hidden>As the Kdasya London luach: 73 minutes after sunset, up to 24 seconds past the minute stays on that minute. In summer, when 8 minutes after the 8.5&deg; time is later, that is used, rounded up. Needs script v8.5 on each device.</p>' +
+    '<label>Havdalah<select id="zhm" onchange="zhv();zchanged()"><option value="0">Geonim</option><option value="1">Rabbeinu Tam</option><option value="2">London (Kedassia luach)</option></select></label>' +
+    '<p class="hint" id="zlh" hidden>As the Kedassia London luach: 73 minutes after sunset, up to 24 seconds past the minute stays on that minute. In summer, when 8 minutes after the 8.5&deg; time is later, that is used, rounded up. Needs script v8.5 on each device.</p>' +
     '<label id="zgl">Geonim<select id="zg" onchange="zchanged()"><option value="0">Nightfall, sun 8.5&deg; below</option><option value="1">Nightfall, sun 7.08&deg; below</option><option value="2">Nightfall, sun 6&deg; below</option><option value="42">42 minutes after sunset</option><option value="50">50 minutes after sunset</option><option value="60">60 minutes after sunset</option></select></label>' +
     '<label id="zrtl">Rabbeinu Tam<select id="zrt" onchange="zchanged()"><option value="72">72 minutes after sunset</option><option value="90">90 minutes after sunset</option></select></label>' +
     '<p class="hint">Rabbeinu Tam is never less than 8 minutes after the Geonim time. Sunset and candle lighting drop the seconds; havdalah up to 24 seconds past the minute uses that minute, otherwise the next.</p>' +
