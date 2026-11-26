@@ -50,6 +50,9 @@ function rpcLocal(method, params) {
     .then(function (j) { if (j.error) throw new Error(j.error.message || "RPC error"); return j.result; });
 }
 function rpcAt(base, method, params) {
+  var rd = /\.(Get|List|GetMany|GetStatus|GetConfig|GetDeviceInfo)$/.test(method) ||
+    (method === "Script.Eval" && !/cmd=|set=|=\[\]|KVS\.Set|Switch\.Set/.test(String(params && params.code)));   // status reads and checks change nothing
+  if (!rd) delete RAWC[base || ""];                                     // a change: read again next time
   if (!base) return rpcLocal(method, params);
   return rpcLocal("HTTP.Request", { method: "POST", url: base + "/rpc", timeout: 10,
       body: JSON.stringify({ id: 1, method: method, params: params || {} }) })
@@ -184,26 +187,58 @@ function jobAction(j) {
 }
 function rkey(d) { return d.sub ? "zmanim_rules_" + d.sw : "zmanim_rules"; }   // zman schedules: one list per relay
 function ikey(d, b) { return d.sub ? b + "_" + d.sw : b; }   // input: zmanim_in (settings) / zmanim_ia (what a press does now)
+// One read per DEVICE (not per output): its schedule list and its zmanim_* settings, kept for a short while so the
+// outputs of a Pro 4PM share it. Anything that writes to a device drops its copy (see rpcAt).
+var RAWC = {};
+function kvMany(base, pat) {                     // KVS.GetMany; firmware answers with an array or an object of items
+  return rpcAt(base, "KVS.GetMany", { match: pat }).then(function (r) {
+    var o = {}, it = r && r.items;
+    if (Array.isArray(it)) it.forEach(function (x) { o[x.key] = x.value; });
+    else if (it) Object.keys(it).forEach(function (k) { var v = it[k]; o[k] = v && typeof v === "object" && "value" in v ? v.value : v; });
+    return o;
+  });
+}
+function devRaw(d) {
+  var b = d.base || "", c = RAWC[b];
+  if (c && Date.now() - c.t < 20000) return c.p;
+  var raw = { jobs: [], kv: null };
+  var p = rpcAt(d.base, "Schedule.List").then(function (r) { raw.jobs = r.jobs || []; })
+    .then(function () {
+      var kv = {};
+      return ["zmanim_skip", "zmanim_rules*", "zmanim_i*"].reduce(function (q, pat) {
+        return q.then(function () { return kvMany(d.base, pat).then(function (o) { for (var k in o) kv[k] = o[k]; }); });
+      }, Promise.resolve()).then(function () { raw.kv = kv; }, function () { raw.kv = null; });   // null: read keys one by one
+    })
+    .then(function () { return raw; });
+  RAWC[b] = { t: Date.now(), p: p };
+  p.catch(function () { if (RAWC[b] && RAWC[b].p === p) delete RAWC[b]; });
+  return p;
+}
+function kvOne(d, raw, key) {                     // a value from the device copy, or read it on its own (older firmware)
+  if (raw.kv) return Promise.resolve(key in raw.kv ? raw.kv[key] : null);
+  return rpcAt(d.base, "KVS.Get", { key: key }).then(function (r) { return r.value; }).catch(function () { return null; });
+}
 function loadSchedules(d) {                    // one request at a time: the main Shelly relays requests for the others
-  return rpcAt(d.base, "Schedule.List").then(function (r) {
-    d.sj = (r.jobs || []).filter(function (j) {
+  return devRaw(d).then(function (raw) {
+    d.sj = raw.jobs.filter(function (j) {
       var c = j.calls && j.calls[0], id = c && c.params && typeof c.params.id === "number" ? c.params.id : null;
       return id === null ? !d.sub : (id === d.sw || (!d.multi && !d.sub));
     }).map(function (j) {
       var ps = parseSpec(j.timespec || ""), a = jobAction(j), m = j.calls && j.calls[0] && j.calls[0].method;
       return { id: j.id, en: !!j.enable, t: ps && ps.t, d: ps && ps.d, a: a, ts: j.timespec, fx: !!(ps && a !== null), m: m, ia: jobIa(j) };
     });
-  })
-    .then(function () { return rpcAt(d.base, "KVS.Get", { key: "zmanim_skip" }).then(function (r) { d.sk = JSON.parse(r.value); }).catch(function () { d.sk = []; }); })
-    .then(function () { return rpcAt(d.base, "KVS.Get", { key: rkey(d) }).then(function (r) { d.rj = JSON.parse(r.value); }).catch(function () { d.rj = []; }); })
-    .then(function () { return rpcAt(d.base, "KVS.Get", { key: ikey(d, "zmanim_in") }).then(function (r) { d.inp = String(r.value); }).catch(function () { d.inp = ""; }); })
-    .then(function () { return rpcAt(d.base, "KVS.Get", { key: ikey(d, "zmanim_ia") }).then(function (r) { d.ia = String(r.value); }).catch(function () { d.ia = ""; }); });
+    function js(v, dflt) { try { return v === null || v === undefined ? dflt : JSON.parse(v); } catch (e) { return dflt; } }
+    return kvOne(d, raw, "zmanim_skip").then(function (v) { d.sk = js(v, []); })
+      .then(function () { return kvOne(d, raw, rkey(d)); }).then(function (v) { d.rj = js(v, []); })
+      .then(function () { return kvOne(d, raw, ikey(d, "zmanim_in")); }).then(function (v) { d.inp = v === null ? "" : String(v); })
+      .then(function () { return kvOne(d, raw, ikey(d, "zmanim_ia")); }).then(function (v) { d.ia = v === null ? "" : String(v); });
+  });
 }
 function refreshDev(d, withSchedules) {
   if (d.core === undefined) return Promise.resolve();
-  var p = withSchedules ? loadSchedules(d).catch(function () {}) : Promise.resolve();
-  return p.then(function () { return core(d, ""); })
+  return core(d, "")
     .then(function (s) { d.sum = s; d.err = null; chNames(d); render(d); return chExpand(d, s); })
+    .then(function () { if (withSchedules) return loadSchedules(d).then(function () { render(d); }, function () {}); })
     .catch(function (e) { d.err = "Not reachable just now (" + e.message + ")"; cards(); });
 }
 // names for relays of a multi-relay device: the relay's own name in the Shelly app, else "<device>, output N"
@@ -225,7 +260,7 @@ function chExpand(d, s) {                        // first reply from a multi-rel
   });
   Array.prototype.splice.apply(DEVS, [at, 0].concat(add));
   chNames(d); cards(); DE = null;
-  // the first relay's schedules were read before we knew there are several relays: read them again for this relay only
+  // relay 1's schedules: filtered again now we know there are several relays (from the device copy, no new read)
   return add.reduce(function (p, x) { return p.then(function () { return refreshDev(x, true); }); },
     loadSchedules(d).then(function () { render(d); }).catch(function () {}));
 }

@@ -167,6 +167,11 @@ var SIM = (function () {
       case "Switch.GetStatus": return { id: p.id || 0, output: d.outs[p.id || 0] };
       case "KVS.Get": if (!(p.key in d.kv)) err(-105, "Argument 'key', value '" + p.key + "' not found !"); return { etag: "x", value: d.kv[p.key] };
       case "KVS.Set": d.kv[p.key] = String(p.value); save(); return { etag: "x", rev: 1 };
+      case "KVS.GetMany": {                       // "abc*" matches keys starting with abc
+        var pat = String(p.match || "*"), pre = pat.replace(/\*$/, ""), exact = pat.slice(-1) !== "*", items = [];
+        Object.keys(d.kv).sort().forEach(function (k) { if (exact ? k === pat : k.indexOf(pre) === 0) items.push({ key: k, etag: "x", value: d.kv[k] }); });
+        return { items: items, offset: 0, total: items.length };
+      }
       case "KVS.Delete": delete d.kv[p.key]; save(); return { rev: 1 };
       case "Schedule.List": return { jobs: JSON.parse(JSON.stringify(d.jobs)), rev: 1 };
       case "Schedule.Create": {
