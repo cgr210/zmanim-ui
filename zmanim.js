@@ -1403,6 +1403,15 @@ rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || "
   .then(function (ips) { var p = loadPeers(ips); if (!$("manage").open) { DE = null; dlist(); } return p; })
   .then(function () { if (!$("manage").open) { DE = null; dlist(); } });
 // keep status current: one device at a time, every 15 s
+// a device that didn't answer is tried again after 2 minutes, not every 15 s, so it doesn't hold up the others
+var BUSY = false;
 setInterval(function () {
-  DEVS.reduce(function (p, d) { return p.then(function () { return d.dead ? null : refreshDev(d); }); }, Promise.resolve());
+  if (BUSY) return;                              // the last round (over a slow link) hasn't finished yet
+  BUSY = true;
+  DEVS.reduce(function (p, d) {
+    return p.then(function () {
+      if (d.dead || (d.err && d.retryAt > Date.now())) return null;
+      return refreshDev(d).then(function () { d.retryAt = d.err ? Date.now() + 120000 : 0; });
+    });
+  }, Promise.resolve()).then(function () { BUSY = false; }, function () { BUSY = false; });
 }, 15000);
