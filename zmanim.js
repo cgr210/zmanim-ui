@@ -79,10 +79,15 @@ function core(d, q) {
 var DEVS = [{ base: "", core: CORE, sw: SW, name: window.NM || "This device", sj: [], sk: [] }];
 var SEL = null, PEERS_DIRTY = false;
 
-function parsePeer(s) { var p = String(s).split("#"); return { ip: p[0], mac: (p[1] || "").toLowerCase() }; }
+// device list entry: "ip#mac#script#output" (script id and output remembered so the page needn't look for them each time)
+function parsePeer(s) {
+  var p = String(s).split("#"), n = function (x) { return /^\d+$/.test(x || "") ? +x : undefined; };
+  return { ip: p[0], mac: (p[1] || "").toLowerCase(), core: n(p[2]), sw: n(p[3]) };
+}
+function peerStr(ip, mac, core, sw) { return ip + (mac ? "#" + mac + (core !== undefined ? "#" + core + "#" + (sw || 0) : "") : ""); }
 function main(d) { return !d.sub; }
 function savePeers() {
-  var v = DEVS.filter(function (d) { return d.base && !d.sub; }).map(function (d) { return d.ip + (d.mac ? "#" + d.mac : ""); });
+  var v = DEVS.filter(function (d) { return d.base && !d.sub; }).map(function (d) { return peerStr(d.ip, d.mac, d.core, d.sw); });
   return rpcLocal("KVS.Set", { key: "zmanim_peers", value: JSON.stringify(v) });
 }
 // check it is the expected device, then find its zmanim script (the running script that defines webCmd)
@@ -93,8 +98,13 @@ function connect(d) {
     if (mac && !d.mac) { d.mac = mac; PEERS_DIRTY = true; }
     d.dname = i.name || ""; d.name = i.name || i.id || d.ip; cards();
   }, function (e) { e.moved = true; throw e; })
-    .then(function () { return rpcAt(d.base, "Script.List"); })
+    .then(function () {
+      if (d.core0 !== undefined) { d.core = d.core0; d.sw = d.sw0 || 0; d.cached = true; return "done"; }   // remembered: no search
+      return rpcAt(d.base, "Script.List");
+    })
+    .then(function (r) { if (r === "done") return "done"; return r; })
     .then(function (r) {
+      if (r === "done") return "done";
       var run = (r.scripts || []).filter(function (x) { return x.running; }), found = null;
       return run.reduce(function (p, x) {
         return p.then(function () {
@@ -104,9 +114,13 @@ function connect(d) {
       }, Promise.resolve()).then(function () { return found; });
     })
     .then(function (id) {
+      if (id === "done") return;
       if (id === null) throw new Error("The zmanim script isn't running on this device");
-      d.core = id;
-      return evalAt(d.base, id, "CFG.switchId").then(function (sw) { d.sw = +sw || 0; });
+      d.core = id; d.cached = false;
+      return evalAt(d.base, id, "CFG.switchId").then(function (sw) {
+        d.sw = +sw || 0;
+        if (d.core !== d.core0 || d.sw !== d.sw0) PEERS_DIRTY = true;       // remember it for next time
+      });
     });
 }
 // scan this network (x.x.x.1-254) for a device's MAC, 4 at a time, nearest to its old address first
@@ -135,7 +149,7 @@ function scan(d) {
   });
 }
 function addPeer(entry) {
-  var e = parsePeer(entry), d = { base: "http://" + e.ip, ip: e.ip, mac: e.mac, name: e.ip, sj: [], sk: [], err: "Connecting" };
+  var e = parsePeer(entry), d = { base: "http://" + e.ip, ip: e.ip, mac: e.mac, core0: e.core, sw0: e.sw, name: e.ip, sj: [], sk: [], err: "Connecting" };
   DEVS.push(d); cards();
   return connect(d).catch(function (err) {
     if (!err.moved || !d.mac) throw err;
@@ -147,6 +161,11 @@ function addPeer(entry) {
     });
   })
     .then(function () { d.err = null; return refreshDev(d, true); })
+    .then(function () {                          // remembered script didn't answer (reinstalled?): look for it again
+      if (!d.err || !d.cached) return;
+      d.cached = false; d.core0 = undefined; d.err = "Connecting"; cards();
+      return connect(d).then(function () { d.err = null; return refreshDev(d, true); });
+    })
     .catch(function (x) { d.err = x.message || "Not reachable"; d.dead = true; cards(); });
 }
 function loadPeers(ips) {
@@ -1251,7 +1270,10 @@ function dfadd(i) {
 function dsave() {
   var ips = [], bad = null;
   DE = DE.filter(function (e) { return e.self || e.ip || e.name; });        // an empty new row is just ignored
-  DE.forEach(function (e) { if (e.self) return; if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(e.ip)) bad = e.ip || "(empty)"; else ips.push(e.ip + (e.mac && e.ip === e.oip ? "#" + e.mac : "")); });
+  DE.forEach(function (e) { if (e.self) return; if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(e.ip)) bad = e.ip || "(empty)"; else {
+    var k = e.mac && e.ip === e.oip ? DEVS.filter(function (x) { return !x.sub && x.base && x.mac === e.mac; })[0] : null;
+    ips.push(k ? peerStr(e.ip, e.mac, k.core, k.sw) : e.ip + (e.mac && e.ip === e.oip ? "#" + e.mac : ""));
+  } });
   if (bad) { $("dmsg").textContent = "Not a valid IP address: " + bad; return; }
   if (DE.some(function (e) { return e.name.length > 40 || (e.chs || []).some(function (c) { return c.name.length > 40; }); })) { $("dmsg").textContent = "Names can be up to 40 characters"; return; }
   $("dmsg").textContent = "Saving";
