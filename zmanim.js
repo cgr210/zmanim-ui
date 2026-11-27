@@ -1278,6 +1278,7 @@ function dsave() {
   }).catch(function (x) { $("dmsg").textContent = "Failed: " + x.message; });
 }
 
+var BUSY0 = false;
 // ------------------------------------------------------------------ page
 document.getElementById("app").outerHTML =
 '<main>' +
@@ -1397,16 +1398,18 @@ rpcLocal("Sys.GetConfig").then(function (c) { if (c && c.location && c.location.
 if (!window.SIM && $("zadd")) $("zadd").parentNode.removeChild($("zadd"));
 if (!window.SIM && $("zdayf")) $("zdayf").parentNode.removeChild($("zdayf"));     // Zmanim for a day: demo page only
 zlocs(); loadLocs(); tokShow();
+BUSY0 = true;                                     // first load: no refresh rounds until it's done
 rpcLocal("Shelly.GetDeviceInfo").then(function (i) { DEVS[0].dname = i.name || ""; DEVS[0].name = i.name || i.id || DEVS[0].name; cards(); }).catch(function () {})
   .then(function () { return refreshDev(DEVS[0], true); })
   .then(function () { return rpcLocal("KVS.Get", { key: "zmanim_peers" }).then(function (r) { return JSON.parse(r.value); }).catch(function () { return window.PEERS || []; }); })
   .then(function (ips) { var p = loadPeers(ips); if (!$("manage").open) { DE = null; dlist(); } return p; })
-  .then(function () { if (!$("manage").open) { DE = null; dlist(); } });
+  .then(function () { if (!$("manage").open) { DE = null; dlist(); } })
+  .then(function () { BUSY0 = false; }, function () { BUSY0 = false; });
 // keep status current: one device at a time, every 15 s
 // a device that didn't answer is tried again after 2 minutes, not every 15 s, so it doesn't hold up the others
 var BUSY = false;
 setInterval(function () {
-  if (BUSY) return;                              // the last round (over a slow link) hasn't finished yet
+  if (BUSY || BUSY0) return;                              // the last round (over a slow link) hasn't finished yet
   BUSY = true;
   DEVS.reduce(function (p, d) {
     return p.then(function () {
